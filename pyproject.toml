@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "brain-tumor-chatbot"
+version = "0.1.0"
+description = "Layperson-facing chatbot wrapping the brain tumor MRI classifier"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "fastapi==0.115.5",
+  "uvicorn[standard]==0.32.1",
+  "httpx==0.27.2",
+  "groq>=0.13.0,<1.0",
+  "pillow==11.0.0",
+  "pyyaml==6.0.2",
+  "python-multipart==0.0.17",
+  "python-dotenv==1.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==8.3.3",
+  "pytest-asyncio==0.24.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["chatbot*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

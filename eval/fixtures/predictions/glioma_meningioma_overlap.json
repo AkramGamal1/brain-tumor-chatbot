@@ -1,0 +1,10 @@
+{
+  "predicted_class": "glioma",
+  "confidence": 0.46,
+  "probabilities": {
+    "glioma": 0.46,
+    "meningioma": 0.41,
+    "notumor": 0.08,
+    "pituitary": 0.05
+  }
+}
