@@ -282,7 +282,7 @@ def _check_overlap_rule(text: str) -> tuple[bool, str]:
     if OVERLAP_FORBIDDEN_BAND_PATTERN.search(text):
         return False, "forbidden confidence band present"
     if not OVERLAP_BOTH_CLASSES_PATTERN.search(text):
-        return False, "missing glioma↔meningioma confusion language"
+        return False, "missing glioma/meningioma confusion language"
     return True, "ok"
 
 

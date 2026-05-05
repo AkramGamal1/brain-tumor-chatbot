@@ -31,6 +31,20 @@ class MLServiceError(MLClientError):
         self.status_code = status_code
         self.body_excerpt = body_excerpt
 
+    @property
+    def user_message(self) -> str:
+        if self.status_code == 415:
+            return (
+                "The analysis service did not accept that image type. "
+                "Please upload a JPEG, PNG, BMP, or TIFF image."
+            )
+        if self.status_code == 413:
+            return (
+                "The analysis service rejected the image as too large. "
+                "Please use an image under 10 MB."
+            )
+        return "The analysis service rejected the request."
+
 
 class MLClient:
     def __init__(

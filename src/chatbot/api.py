@@ -130,12 +130,12 @@ async def explain(
                 "retry_suggested": True,
             },
         )
-    except MLServiceError:
+    except MLServiceError as exc:
         return JSONResponse(
             status_code=502,
             content={
                 "error": "ml_service_error",
-                "message": "The analysis service rejected the request.",
+                "message": exc.user_message,
                 "retry_suggested": False,
             },
         )

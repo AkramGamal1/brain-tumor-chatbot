@@ -16,8 +16,17 @@ SAFETY_REPLACEMENT = (
 )
 
 
+_DIAGNOSTIC_CONDITION_NOUNS = (
+    r"(?:a\s+|an\s+|the\s+)?"
+    r"(?:glioma|meningioma|pituitary(?:\s+tumou?r)?|tumou?r|cancer|"
+    r"growth|mass|lesion|brain\s+(?:tumou?r|cancer|disease)|"
+    r"neurological\s+(?:condition|disease|disorder))"
+)
 _DIAGNOSTIC_PATTERNS = [
-    re.compile(r"\byou\s+(?:have|are\s+diagnosed\s+with)\b", re.IGNORECASE),
+    re.compile(
+        rf"\byou\s+(?:have|are\s+diagnosed\s+with)\s+{_DIAGNOSTIC_CONDITION_NOUNS}",
+        re.IGNORECASE,
+    ),
     re.compile(r"\bI\s+diagnose\b", re.IGNORECASE),
     re.compile(r"\bthis\s+(?:confirms|means\s+you\s+have)\b", re.IGNORECASE),
     re.compile(r"\byour\s+scan\s+shows\s+you\s+have\b", re.IGNORECASE),
@@ -37,6 +46,25 @@ _TREATMENT_PATTERNS = [
 ]
 
 _RULING_OUT_PATTERN = re.compile(r"\brul(?:e|es|ed|ing)\s+out\b", re.IGNORECASE)
+_RULING_OUT_NEGATORS = (
+    "cannot", "can't", "cant", "can not",
+    "does not", "doesn't", "doesnt",
+    "do not", "don't", "dont",
+    "won't", "will not", "wont",
+    "isn't", "isnt", "is not",
+    "are not", "aren't", "arent",
+    "unable to", "no way to", "without",
+    "never",
+)
+
+
+def _has_unnegated_rule_out(text: str) -> bool:
+    for m in _RULING_OUT_PATTERN.finditer(text):
+        prefix = text[max(0, m.start() - 50): m.start()].lower()
+        if any(neg in prefix for neg in _RULING_OUT_NEGATORS):
+            continue
+        return True
+    return False
 
 _PERCENT_PATTERN = re.compile(r"\d+(?:\.\d+)?\s*%")
 _DECIMAL_NEAR_CONFIDENCE = re.compile(
@@ -61,7 +89,7 @@ _MENTAL_HEALTH_DIAGNOSIS_PATTERNS = [
 _FORBIDDEN_PATTERNS = (
     _DIAGNOSTIC_PATTERNS
     + _TREATMENT_PATTERNS
-    + [_RULING_OUT_PATTERN, _PERCENT_PATTERN, _DECIMAL_NEAR_CONFIDENCE]
+    + [_PERCENT_PATTERN, _DECIMAL_NEAR_CONFIDENCE]
     + _MENTAL_HEALTH_DIAGNOSIS_PATTERNS
 )
 
@@ -112,7 +140,9 @@ def _has_crisis_resources(text: str) -> bool:
 
 
 def _matches_forbidden(text: str) -> bool:
-    return any(p.search(text) for p in _FORBIDDEN_PATTERNS)
+    if any(p.search(text) for p in _FORBIDDEN_PATTERNS):
+        return True
+    return _has_unnegated_rule_out(text)
 
 
 def scan(
