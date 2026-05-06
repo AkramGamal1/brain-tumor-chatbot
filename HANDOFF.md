@@ -1,331 +1,215 @@
-# HANDOFF — Brain Tumor Chatbot, end of Phase 1 work session
+# HANDOFF — end of Day 1, ready for Day 2 manual eval
 
 ## TL;DR
 
-Phase 1 is **built but not committed**. All 22 smoke tests still pass. The
-Groq key is in `.env` and the eval has been run once end-to-end with real
-LLM calls. Result: **5 of 7 gates green; 2 gates (notumor rule, overlap
-rule) blocked by a `safety_check` false positive that has now been fixed
-on disk but not yet re-verified under load** because we exhausted the
-Groq free-tier daily token budget (TPD: 100k) iterating today. The fix
-is small and the smoke suite confirms it preserves all the dangerous
-phrasings the safety check is supposed to block; the diagnostic capture
-showed the LLM's actual output already contains the required gate-1
-language. Re-run the eval ~24h from the cap-hit time and gates 1–2 are
-expected to flip green.
+**Day 1 is done.** Commits `3a4c0c0` (2.1) and `5d938a7` (2.2) landed
+on `experiment/gemini`. The chatbot has both endpoints (`/explain`,
+`/chat`), Phase 1 eval passes 7/7, and `eval/prompts.yaml` is in place
+ready for the Day 2 manual scoring run.
 
-**Do not commit Phase 1 until all seven gates pass on a clean
-`python eval/run_eval.py --phase 1` run.**
+**Day 2 is the manual eval.** Hand-paste each of the 15 prompts in
+`eval/prompts.yaml` into `POST /chat`, score against the
+`pass_criteria` / `fail_signals` for each, and commit a scorecard as
+**Commit 2.3**.
 
----
+**Day 3 is Phase 3 Branch A** — static HTML demo page +
+end-to-end test against the real parent ML on `localhost:8000`.
 
-## What's done
+## Commits on this branch (newest first)
 
-- **Repo bootstrap.** `pyproject.toml`, `.env.example`, `.gitignore`,
-  `README.md`, `CLAUDE.md`, virtualenv at `.venv`, package installed
-  editable.
-- **Plan persisted.** `docs/chatbot-plan.md` is the full implementation plan
-  with the Phase-1-mid-flight LLM-provider addendum at the bottom.
-- **Corpus.** All 12 markdown pages in `corpus/` (4 class pages, MRI basics,
-  model capabilities, what-this-model-cannot-tell-you, seek-care,
-  confidence-meaning, emotional-impact, crisis-resources,
-  questions-to-ask-your-doctor).
-- **Source modules.** `src/chatbot/` has `__init__.py`, `disclaimer.py`,
-  `confidence.py`, `image_check.py`, `corpus.py`, `ml_client.py`,
-  `safety_check.py`, `llm.py`, `prompts.py`, `api.py`. `retriever.py` is
-  intentionally deferred to Phase 2 per the plan.
-- **Eval harness.** `eval/run_eval.py` (Phase 1 mode), 5 prediction JSON
-  fixtures, 3 simulated ML-failure cases (mocked exceptions),
-  `eval/fixtures/_make_images.py` plus the 4 generated PNG/JPG image
-  fixtures. The lifespan-context bug in the harness was found and fixed
-  (`ASGITransport` does not forward FastAPI lifespan; the eval now drives
-  it explicitly via `app.router.lifespan_context`).
-- **Smoke tests.** `tests/test_smoke.py` — 22 cases covering class-name
-  invariant, disclaimer idempotence, confidence band thresholds,
-  glioma↔meningioma override boundaries, image-check pass/reject,
-  safety-pattern hits, crisis substitution, and corpus loading. Currently
-  22/22 PASS.
-- **End-to-end behaviors verified via real HTTP:**
-  - `/health` returns `{"status":"ok"}`.
-  - `/explain` with a color image → 200 `image_warning` + `force_available:true`.
-  - `/explain` with extreme-aspect → 200 `image_warning`.
-  - `/explain` with valid grayscale and parent ML offline → 502
-    `ml_service_unavailable` with `retry_suggested: true`. No LLM call
-    occurred (verified by the `CountingLLMClient` wrapper used in the eval).
-- **First end-to-end eval against Groq + Llama 3.3 70B** (this session):
-  exit 1 with the scorecard below. Two issues surfaced and were
-  resolved in code; one re-run remains:
-  - Gates 3, 4, 5, 6, 7 PASS clean.
-  - Gates 1 and 2 FAIL because `safety_check` was over-firing on benign
-    LLM output and substituting the canned "I caught myself…" reply,
-    which then lacked the gate-1 / gate-2 anchor phrases.
-  - Two on-disk fixes landed (see "Today's fixes" below) and the smoke
-    suite is still 22/22.
-
-## Today's fixes (uncommitted, working tree)
-
-Two files modified, both expected to land in the Phase 1 commit:
-
-**`src/chatbot/safety_check.py` — false-positive narrowing.**
-
-Two patterns in the forbidden-pattern set were too broad and were killing
-otherwise-correct LLM output:
-
-1. `\byou\s+(?:have|are\s+diagnosed\s+with)\b` matched the diagnostic
-   phrasing the rule is meant to catch ("you have a glioma") but ALSO
-   matched any benign "you have …" — e.g. **"if you have concerns about
-   symptoms, talk to a doctor"** — which is gentle empathetic framing,
-   not a diagnostic claim. This was the actual trip in the eval: the
-   `notumor_high_conf` LLM output contained all three required gate-1
-   phrases (`four specific conditions`, `does not mean … healthy`,
-   `qualified clinician`), and the safety substitution wiped them.
-
-2. `\brul(?:e|es|ed|ing)\s+out\b` was forbidden in either direction.
-   But the corpus + system prompt actively encourage the LLM to say
-   "the model **cannot** rule out other conditions" as the
-   epistemically-correct framing — that's not a violation, it's the
-   point.
-
-The fix:
-
-- Diagnostic pattern now requires a medical-condition noun within the
-  same phrase: `you have <a|an|the> (glioma|meningioma|pituitary|tumor|
-  cancer|growth|mass|lesion|brain tumor|brain disease|neurological
-  condition|...)`. "You have concerns" no longer matches; "You have a
-  glioma" still does (the smoke test
-  `test_safety_blocks_diagnostic_phrasing` enforces this).
-- Rule-out check moved to a function (`_has_unnegated_rule_out`) that
-  iterates matches and skips any preceded within 50 chars by a negation
-  word (`cannot`, `can't`, `does not`, `doesn't`, `unable to`,
-  `no way to`, `never`, `without`, etc.). Smoke test
-  `test_safety_blocks_ruling_out` (un-negated form) still trips, and
-  the new behavior allows the corpus's standard "the model cannot rule
-  out…" phrasing.
-
-The diagnostic intent of `safety_check` is **unchanged** — only its
-precision improved. All 22 smoke tests pass after the change.
-
-**`eval/run_eval.py` — Windows console encoding fix.**
-
-The gate-2 failure-reason string contained a `↔` character (U+2194),
-which crashes `print` under Windows cp1252 stdout and prevented the
-rest of the scorecard from rendering. Replaced with `/` in the reason
-text only — the user-visible character in `prompts.py` and the corpus
-is unchanged.
-
-## Token budget situation (the reason we didn't re-verify)
-
-Groq's free tier is **100k tokens per rolling 24h window** ("tokens per
-day"). Each `/explain` call ships the full corpus in the system prompt
-(~6.4k input tokens) and produces ~500 output tokens, so a single
-fixture costs ~7k. A full Phase 1 eval (5 prediction fixtures + 3
-ml-failure mocks that don't call the LLM + 4 image cases that do) =
-roughly 35–50k tokens.
-
-Today consumed: the first failed eval run (~35k), the diagnostic
-capture (~7k before the cap fired mid-run), the polling probe and the
-post-fix retry (~7k). Total ≈ 50k+ on top of any prior-session usage,
-which put us at `Used 96281 / Limit 100000`. Token aging rate ≈ 70/min,
-so freeing up enough headroom for another full eval requires waiting
-roughly 10–24 hours from the cap-hit time, depending on when within
-the 24h window the heavy usage actually landed.
-
-The pragmatic call (from the user, this session): wait for the rolling
-window to clear, re-run the eval tomorrow. No architecture change, no
-provider swap, no Dev Tier upgrade.
-
-## What's blocking
-
-The Groq free-tier daily token cap is exhausted; re-running the eval
-today would just hit `429 tokens-per-day rate_limit_exceeded` again.
-The cap is a 24h rolling window, so headroom returns gradually.
-**Recommended approach: wait ~24h from the cap-hit time and re-run
-`python eval/run_eval.py --phase 1`.** On the next clean run, gates 1
-and 2 are expected to flip green based on the diagnostic capture from
-this session.
-
-If a faster turnaround is needed, the alternative is a Groq Dev Tier
-upgrade (pay-as-you-go, roughly $0.02 per full eval run) at
-https://console.groq.com/settings/billing. The provider lock-in
-decision was made earlier this session ("don't swap providers again"
-— architecture has cleanly absorbed two swaps already). No new
-provider work should happen.
-
-### Earlier provider history (resolved, kept for archaeology)
-
-| Provider | Outcome |
+| Commit | Title |
 |---|---|
-| Anthropic Claude Haiku 4.5 | Auth OK; 400 `Your credit balance is too low to access the Anthropic API`. No billing path. |
-| Google Gemini (`gemini-2.0-flash`, then `gemini-1.5-flash`) | Auth OK on a fresh AI Studio key; 429 `RESOURCE_EXHAUSTED` with `limit: 0` on free-tier per-minute and per-day quotas. Same result on both models → project- or account-level provisioning issue, not model-specific. |
-| **Groq (`llama-3.3-70b-versatile`)** | **Current. Key in `.env`. First end-to-end eval ran today; safety_check fix landed; re-run pending token reset.** |
+| `5d938a7` | **Commit 2.2:** `/chat` endpoint with chat-specific system prompt. |
+| `3a4c0c0` | **Commit 2.1:** Retriever + Gemini 2.5 swap + override-text fix + `eval/prompts.yaml`. |
+| `605459d` | **Phase 1 close-out:** `/explain` passes all seven hard gates. |
 
-## What's testable right now without an LLM key
+### What landed in `3a4c0c0` (Commit 2.1)
 
-Six of the seven gates can be exercised deterministically. The smoke test
-suite covers the unit-level invariants for these:
+12 files, +571 / −144. Bundle:
 
-| Gate | Source of truth | Status |
-|---|---|---|
-| 5 — image_check rejects color and extreme aspect, passes grayscale | `tests/test_smoke.py` (`test_image_check_*`) | PASS |
-| 6 — `force=true` override skips image check | exercised by the eval's image-fixtures section + verified manually via curl | wired and verified manually |
-| 7 — ML failures return structured errors with no LLM call | `eval/run_eval.py` mocks the three failure modes; manual curl confirms the unavailable path | wired |
-| 4 (partial) — `append_disclaimer` is idempotent and adds the canonical text | `tests/test_smoke.py` (`test_append_disclaimer_*`) | PASS |
-| Safety regex — diagnostic, treatment, ruling-out, percent, decimal-near-confidence | `tests/test_smoke.py` (`test_safety_blocks_*`) | PASS |
-| Crisis substitution + crisis detection | `tests/test_smoke.py` (`test_crisis_*`, `test_contains_crisis_language`) | PASS |
-| Corpus loads with `crisis_response_text` extracted | `tests/test_smoke.py` (`test_corpus_*`) | PASS |
+- `src/chatbot/retriever.py` (new) — `Retriever` ABC,
+  `WholeCorpusRetriever` (live, byte-stable formatting),
+  `EmbeddingRetriever` stub (Phase 3 Branch B trigger).
+- `src/chatbot/prompts.py` — `build_explain_request` consumes
+  `Retriever`. Notumor rule re-framed to be confidence-symmetric
+  (literal "does not mean healthy / no disease" sentence is mandatory
+  at every band — fix for the high-conf regression observed on
+  flash-lite).
+- `src/chatbot/api.py` — retriever wired in lifespan; Gemini env
+  vars (`GOOGLE_API_KEY`, `GEMINI_MODEL`).
+- `src/chatbot/llm.py` — Gemini SDK rewrite via
+  `google.genai.Client.aio.models.generate_content`. External
+  `complete(system_blocks, user_message) -> str` signature unchanged.
+- `src/chatbot/confidence.py` — gate-2 fix:
+  `GLIOMA_MENINGIOMA_OVERRIDE_TEXT` rewritten as a directive that
+  mandates a verbatim sentence colocating "glioma" and "meningioma"
+  within ~17 chars on a single line.
+- `tests/test_smoke.py` — 4 retriever tests (suite 22 → 26).
+- `eval/run_eval.py` — `--categories` flag for chunked-eval; precheck
+  requires `GOOGLE_API_KEY`.
+- `eval/prompts.yaml` (new) — 15 manual-eval prompts:
+  `in_scope` (3), `adjacent_medical_oos` (5), `crisis` (3),
+  `prompt_injection` (4). Each prompt carries `id`, `category`,
+  `gate`, `prompt`, `pass_criteria`, `fail_signals`. Crisis prompts
+  also carry `triggers_phrase` matching `safety_check._CRISIS_PHRASES`.
+- `pyproject.toml` — `groq` removed, `google-genai>=0.8.0,<2.0` added.
+- `.env.example` — Gemini-shape placeholder.
+- `CLAUDE.md`, `docs/chatbot-plan.md` — invariants and plan addendum
+  updated for the Gemini 2.5 swap.
 
-Gates 1, 2, and 3 (notumor rule wording, glioma↔meningioma rule wording, no
-numeric confidence in any rendered explanation) require real LLM output to
-inspect — the eval harness is the only thing that exercises them.
+### What landed in `5d938a7` (Commit 2.2)
 
-## Provider history (this session)
+3 files, +202 / −2:
 
-Three swaps, each strictly scoped to `src/chatbot/llm.py`, the `LLMClient`
-construction in `src/chatbot/api.py`, the env-var name, the eval-harness
-precheck, `.env`/`.env.example`, and surfacing docs. The `Retriever`
-indirection, system-prompt structure, post-generation `safety_check`,
-disclaimer pipeline, endpoint flow, and the seven Phase 1 hard gates were
-**unchanged across all three** — the safety architecture is provider-
-agnostic by construction.
+- `src/chatbot/prompts.py` — `_CHAT_RULES` system prompt with
+  explicit in-scope topics, OOS refusal categories, refusal template,
+  and a defense-in-depth forbidden list mirroring `/explain`.
+  `build_chat_system_prompt(retriever, user_message)` returns two
+  system blocks (rules + corpus with `cache_control`).
+- `src/chatbot/api.py` — `POST /chat` with `ChatRequest(message)`
+  validator. Flow:
+  `crisis pre-check → retriever → LLM → safety_scan →
+  disclaimer append → return`. Crisis pre-check on user input
+  short-circuits before any LLM cost.
+- `tests/test_smoke.py` — 3 new tests (suite 26 → 29):
+  prompt-builder structure, `_CHAT_RULES` content markers, and an
+  ASGI test that verifies `/chat` short-circuits on crisis input
+  with **zero LLM calls** (returns `safety_substituted=true` +
+  `reason="crisis"` + 988 in body).
 
-1. **Anthropic** (planned baseline, model `claude-haiku-4-5-20251001`,
-   `anthropic` SDK, `cache_control` ephemeral block on the corpus).
-2. **Google Gemini** (`gemini-2.0-flash`, briefly via `google-generativeai`
-   then immediately migrated to `google-genai` because the older SDK is in
-   end-of-support). Three system blocks were concatenated into a single
-   `system_instruction` since Gemini's free tier has no caching equivalent.
-3. **Groq** (current, `llama-3.3-70b-versatile`, `groq` SDK,
-   OpenAI-compatible chat completions). Three system blocks concatenated
-   into one system message in the messages list. `cache_control` field on
-   the corpus block remains in the prompt builder (silently ignored) so a
-   future swap back to Claude is still a one-file change.
+Manual smoke at commit time: 3 real `/chat` calls via ASGI
+(in-scope glioma, OOS medical, OOS off-topic) — all returned the
+expected shapes with disclaimer appended.
 
-The full sequence is captured in the addendum at the bottom of
-`docs/chatbot-plan.md`.
+## Verification at end of Day 1
+
+- `pytest tests/test_smoke.py -v`: **29/29 PASS**.
+- `python eval/run_eval.py --phase 1`: **7/7 gates PASS** on
+  `gemini-2.5-flash-lite` (verified post-2.1; 2.2 only added
+  `/chat`, did not touch the `/explain` path).
+
+## Day 2 — manual Phase 2 eval (the scorecard run)
+
+**Goal:** score all 15 prompts in `eval/prompts.yaml` against their
+`pass_criteria` / `fail_signals` and produce a scorecard.
+
+1. Make sure `.env` has `GEMINI_MODEL=gemini-2.5-flash-lite` and a
+   live `GOOGLE_API_KEY`.
+2. Start the chatbot:
+   `uvicorn chatbot.api:app --reload --port 8001`. Parent ML does
+   NOT need to be running — `/chat` does not call it.
+3. For each prompt in `eval/prompts.yaml`, POST to
+   `http://localhost:8001/chat` with body
+   `{"message": "<the prompt text>"}`. Inspect the response.
+4. Score against `pass_criteria` (all must hold) and `fail_signals`
+   (any one observed = fail). A response that hits any fail signal
+   fails even if pass criteria are met.
+5. Build a scorecard (markdown or yaml) recording, per prompt:
+   `id`, `pass`/`fail`, observed response excerpt, and the
+   specific failed criterion or fail signal if applicable.
+6. **Commit the scorecard as Commit 2.3.** Suggested message:
+   ```
+   Commit 2.3: Phase 2 manual eval scorecard.
+   15 prompts scored against the four hard gates
+   (in_scope_answered, oos_refused, crisis_handled, no_forbidden).
+   Failed gates documented for Phase 3's docs/LIMITATIONS.md.
+   ```
+
+### Token-budget note for Day 2
+
+Gemini Flash-Lite free tier is **~250 requests/day** for this
+account. 15 prompts plus a comfortable buffer for re-runs and
+sanity checks fits well inside that. **No automated runner** —
+this is manual by design (revisited and locked: see "Compression
+decisions" below).
+
+**Important constraint:** do not make any non-eval LLM calls
+during the Day 2 session. Save the budget for the 15 prompts and
+re-runs. Tonight's session ends before any further LLM calls.
+
+## Day 3 — Phase 3 Branch A
+
+Branch A = single-file static UI mounted via FastAPI's
+`StaticFiles`. It is the **graduation deliverable**. Branch B
+(`EmbeddingRetriever` + semantic retrieval) is deferred
+post-graduation.
+
+Tasks:
+
+1. Add a static HTML demo page (one HTML file, vanilla JS, no
+   build step) that hits `/explain` and `/chat`. Mount via
+   `app.mount("/", StaticFiles(directory=..., html=True))` (or
+   under `/ui` if root collides with anything).
+2. Bring up the parent ML on `http://localhost:8000` and run
+   real end-to-end tests:
+   - Upload a real grayscale MRI through the UI to `/explain`.
+   - Try a non-MRI image to verify the `image_warning` flow.
+   - Try `force=true` override to verify the bypass.
+   - Hit `/chat` from the UI with an in-scope, OOS, and crisis
+     message.
+3. If any of the Phase 2 gates failed in Day 2's scorecard,
+   create `docs/LIMITATIONS.md` and document them. Phase 3 ships
+   regardless.
+4. Commit Phase 3 work in the natural number of commits — no
+   pre-determined message structure.
+
+## LLM provider state
+
+- **Active model:** `gemini-2.5-flash-lite` (set in `.env`).
+  Retained for Day 2 evaluation consistency — switching mid-eval
+  would invalidate scoring.
+- `gemini-2.5-flash`: was 503-UNAVAILABLE through Day 1.
+  Re-try periodically. Prompts are tuned to pass on either model.
+- `gemini-2.5-pro`: free-tier `limit:0` for this account (not
+  provisioned).
+- Provider-agnostic interface in `llm.py` preserved — switching
+  models is a `.env` change.
+
+## Compression decisions (locked, do not revisit)
+
+- Phase 2 eval is **manual**, not automated. The three-commit
+  Phase 2 structure is preserved: 2.1 (retriever + ancillary
+  bundle), 2.2 (`/chat`), 2.3 (manual scorecard). The prompts file
+  landed inside 2.1, **not** as a separate 2.3a — there is no 2.3a.
+- Phase 2 categories trimmed 7 → 4: keep `in_scope`,
+  `adjacent_medical_oos`, `crisis`, `prompt_injection`. Dropped
+  three (`in_scope_emotional`, `adjacent_admin_oos`, `off_topic`)
+  as future work.
+- Phase 3 ships **Branch A unconditionally**. Failed Phase 2 gates
+  become entries in `docs/LIMITATIONS.md`. Branch B is deferred
+  post-graduation.
 
 ## Files that ground future sessions
 
-Read these three before doing anything else:
+- `docs/chatbot-plan.md` — full implementation plan + provider-swap
+  addenda.
+- `docs/INTEGRATION.md` — front-end integration guide (Phase 1
+  contract).
+- `CLAUDE.md` — chatbot-side cross-cutting invariants.
+- `eval/prompts.yaml` — 15-prompt manual eval input.
+- `reference/CLAUDE.md` and `reference/README.md` — read-only
+  snapshots of the parent ML repo's docs. **Never modify these.**
+- `git show 5d938a7` — Commit 2.2.
+- `git show 3a4c0c0` — Commit 2.1.
+- `git show 605459d` — Phase 1 close-out.
 
-- `docs/chatbot-plan.md` — full implementation plan (Phases 1, 2, 3) plus
-  the LLM-swap addendum.
-- `reference/CLAUDE.md` and `reference/README.md` — snapshots of the
-  parent ML repo's docs (the `/predict` contract, the four-class canonical
-  order, documented overconfidence, glioma↔meningioma confusion). **Never
-  modify these.**
-- This `HANDOFF.md` — current state.
+## State-of-the-machine reminders
 
-`CLAUDE.md` (chatbot-side) lists the cross-cutting invariants — class-name
-order, single inference path through `MLClient`, fixed endpoint flow with
-crisis pre-check as step 1, no numeric confidence in user-facing text,
-`Retriever` indirection rule, stateless service, current LLM provider, and
-the provider-agnostic-by-design clause.
+- **Parent ML API:** set up locally on `http://localhost:8000`,
+  not required for Day 2's `/chat` work; required for Day 3's
+  end-to-end testing. `/predict`'s multipart field is `file`.
+- **Branch:** `experiment/gemini`. Last commit `5d938a7`.
 
-## Pre-integration checklist
+## Hygiene note
 
-Parent ML API setup is **complete on this machine**:
+Carried forward — three keys still pending revocation:
 
-- `outputs/models/best_model.pth` is in place at
-  `E:\projects\brain-tumor-detection\outputs\models\best_model.pth`.
-- The ML repo's venv is set up; `python scripts/run_api.py` brings the
-  service up on `http://localhost:8000` with the model loaded.
-- `/predict`'s multipart field name is confirmed as `file` (verified by
-  reading `src/api/main.py` directly and against the running server).
-  The chatbot's `ml_client.py` matches — no code change needed.
+- One Anthropic key (zero-balance, inert).
+- Two Google Gemini keys (Gemini 2.0 / 1.5 provisioning debug).
+- A fourth Google key briefly leaked into `.env.example` was
+  rotated by the user mid-session and is now invalid.
 
-End-to-end testing now has both services available locally, so step 4
-of "What to do next" below (field-name verification) is **done**. Phase 2
-can call the real ML model from the chatbot when needed.
+Revoke at:
 
-## What to do next
-
-1. **Re-run the eval ~24h after the cap-hit time:**
-   `.venv\Scripts\python.exe eval\run_eval.py --phase 1`. Expect: a
-   scorecard table of seven gates, each PASS or FAIL with per-case
-   reasons; exit 0 if all pass, 1 if any fail.
-   - If a 429 still fires on the first fixture, the rolling window
-     hasn't cleared enough yet — wait longer or upgrade to Dev Tier.
-   - If gates 1 and 2 now flip to PASS as expected, proceed to step 4.
-2. **If gates 1 or 2 still fail on exact-phrase compliance** after the
-   safety_check fix is exercised under load, the next likely cause is
-   the LLM's wording (e.g. saying `"three types"` instead of `"four
-   conditions"`, or mentioning glioma and meningioma in separate
-   paragraphs rather than the single-sentence pattern the scorer
-   matches). Tighten `src/chatbot/prompts.py` to require the specific
-   anchor phrases. The scorer patterns live in `eval/run_eval.py`
-   (`NOTUMOR_*` and `OVERLAP_*` constants near line 120). Iterate
-   until green. **Do not weaken the scorer to make tests pass** —
-   tighten the prompt.
-3. **If gates 1 or 2 fail because safety_check fires again** on a
-   different benign phrase, the diagnostic loop is: dump raw LLM
-   output, find which `_FORBIDDEN_PATTERNS` entry matched, narrow that
-   pattern the same way today's two fixes did (require a medical-noun
-   context, or function-check for negation). The shape of the fix is
-   set; just identify the new offender.
-4. **Field-name verification** (one-time): start the parent ML API
-   (`E:\projects\brain-tumor-detection`, `python scripts/run_api.py`),
-   open http://localhost:8000/docs, and confirm `/predict`'s multipart
-   field name. The chatbot assumes `file` (FastAPI convention). If it's
-   different, update `src/chatbot/ml_client.py` line ~55 (the `files = {...}`
-   dict) and re-run the eval.
-5. **Write `docs/INTEGRATION.md`** for the front-end team. Required
-   sections per the deferred TODO from this session: the two endpoints
-   (`/explain`, eventually `/chat`) with method, content type, request
-   and response shapes; the four `/explain` response shapes (success,
-   `image_warning`, `ml_service_*` errors); the `force=true` override
-   flow with a curl example; the canonical disclaimer text; a CORS note
-   that `*` is currently allowed and must be locked down for production.
-   Keep under 200 lines.
-6. **Commit Phase 1.** Single commit, only after all seven gates pass
-   on a clean eval run. Message body must explicitly note the
-   non-trivial fixes that landed during Phase 1:
-   - the `eval/run_eval.py` lifespan-context fix (without it, `state`
-     wasn't populated and `KeyError: 'llm_client'` crashed the eval),
-   - the Anthropic → Gemini → Groq provider swap, with the rationale
-     (no Anthropic billing, Gemini `limit: 0` provisioning issue),
-   - the `safety_check` false-positive narrowing (the
-     `you have <medical noun>` and unnegated-only `rule out` fixes —
-     surfaced because the LLM legitimately writes "if you have
-     concerns" and the corpus's correct framing is "the model cannot
-     rule out…"),
-   - the `eval/run_eval.py` Windows-console encoding fix (replaced a
-     `↔` in the gate-2 reason string with `/` so cp1252 stdout doesn't
-     crash mid-scorecard).
-   Record the seven-gate scorecard in the message body.
-7. **Then proceed to Phase 2** per the plan: `Retriever` ABC +
-   `WholeCorpusRetriever` + `EmbeddingRetriever` stub (commit 2.1),
-   `/chat` endpoint (commit 2.2), full categorized eval harness with all
-   seven prompt categories (commit 2.3).
-
-## Sanity-check commands for the next session
-
-Run these three after pulling the repo to confirm nothing rotted:
-
-```powershell
-# 1. Unit suite — should be 22/22 PASS in <1s
-.\.venv\Scripts\python.exe -m pytest tests/test_smoke.py -v
-
-# 2. App imports cleanly and has the expected routes
-.\.venv\Scripts\python.exe -c "from chatbot.api import app; print([r.path for r in app.routes])"
-
-# 3. Eval harness — exits 2 with a clear `GROQ_API_KEY not set` message if
-#    the key isn't in .env yet; otherwise prints the seven-gate scorecard.
-#    NOTE: if it's been less than ~24h since the last cap-hit, the first
-#    fixture will likely 429 with "tokens per day". Wait or upgrade.
-.\.venv\Scripts\python.exe eval\run_eval.py --phase 1
-```
-
-## Hygiene note (one-time, off the critical path)
-
-Three LLM-provider keys passed through the assistant's context window
-during this session when `.env` was read for swap-related edits:
-
-- One Anthropic key (now zero-balance, harmless but inert),
-- Two Google Gemini keys (created during the Gemini provisioning debug).
-
-None are required by the project anymore. Recommend revoking them at
-https://console.anthropic.com/settings/keys and
-https://aistudio.google.com/app/apikey for cleanliness. The Groq key, once
-you create it, will go through the same path the next time `.env` is
-read — that is unavoidable for any provider that uses an env-var-loaded
-key, and Groq's free-tier keys are easy to rotate.
+- `https://console.anthropic.com/settings/keys`
+- `https://aistudio.google.com/app/apikey`
