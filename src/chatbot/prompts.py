@@ -1,14 +1,15 @@
 """System prompt builders.
 
-Phase 1 ships /explain only. Phase 2 will add /chat and refactor both endpoints
-to consume the Retriever interface; for Phase 1, prompts.py reads CorpusBundle
-directly.
+prompts.py consumes the `Retriever` interface — it never reads the corpus
+directly. The Phase 1 wiring constructs a `WholeCorpusRetriever` at lifespan
+startup; Phase 3 will swap in `EmbeddingRetriever` without touching this
+module.
 """
 
 from __future__ import annotations
 
 from chatbot.confidence import ConfidenceSummary
-from chatbot.corpus import CorpusBundle
+from chatbot.retriever import Retriever
 
 
 _EXPLAIN_RULES = """\
@@ -51,16 +52,20 @@ Your role is NOT to diagnose, treat, or advise.
 # The notumor rule (highest priority):
 If the prediction context tells you the predicted class is "notumor", your
 response MUST explicitly state all three of these. Use the literal
-constructions indicated — do NOT paraphrase them away. This applies
-regardless of the verbal confidence band: low confidence makes these
-warnings MORE important, not less.
+constructions indicated — do NOT paraphrase them away. This applies at EVERY
+verbal confidence band — "fairly certain", "moderately confident", AND
+"uncertain". High confidence does NOT relax these warnings: a confident
+"no tumor" prediction is precisely when a layperson is most likely to misread
+it as "you are healthy", so the warnings are MANDATORY in every notumor
+response regardless of band.
 1. This model only checks for four specific conditions (glioma, meningioma,
    pituitary tumor, and "no tumor"). Use the word "four" literally.
 2. "No tumor detected" does NOT mean the person is healthy or has no disease.
    Your response MUST contain a sentence using one of these literal
    constructions: "does not mean healthy", "does not mean you are healthy",
    or "does not mean no disease". Keep the construction intact in a single
-   sentence — do not split the phrase across clauses.
+   sentence — do not split the phrase across clauses. This sentence is
+   non-optional and must appear even when the model is fairly certain.
 3. Only a clinician can assess overall neurological health.
 
 # The glioma↔meningioma rule:
@@ -77,13 +82,6 @@ that a clinician's interpretation is essential.
   to a doctor).
 - Do not produce any forbidden item from the list above.
 """
-
-
-def _format_corpus(corpus: CorpusBundle) -> str:
-    sections = []
-    for chunk in corpus.chunks:
-        sections.append(f"## {chunk.title}\n\n{chunk.body}")
-    return "# Educational corpus\n\n" + "\n\n---\n\n".join(sections)
 
 
 def _format_prediction_context(
@@ -108,14 +106,15 @@ def _format_prediction_context(
 def build_explain_request(
     prediction: dict,
     confidence: ConfidenceSummary,
-    corpus: CorpusBundle,
+    retriever: Retriever,
 ) -> tuple[list[dict], str]:
     """Return (system_blocks, user_message) for the LLM call."""
+    retrieval = retriever.retrieve()
     system_blocks = [
         {"type": "text", "text": _EXPLAIN_RULES},
         {
             "type": "text",
-            "text": _format_corpus(corpus),
+            "text": retrieval.formatted_text,
             "cache_control": {"type": "ephemeral"},
         },
         {"type": "text", "text": _format_prediction_context(prediction, confidence)},

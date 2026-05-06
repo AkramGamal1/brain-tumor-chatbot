@@ -18,7 +18,7 @@ The full implementation plan and rationale live in `docs/chatbot-plan.md`.
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
-copy .env.example .env   # then fill GROQ_API_KEY (https://console.groq.com/keys)
+copy .env.example .env   # then fill GOOGLE_API_KEY (https://aistudio.google.com/app/apikey)
 ```
 
 ## Common commands
@@ -72,16 +72,19 @@ pytest
 - **Stateless service.** No persistence, no chat history, no PHI handling. Do
   not add session state, request logging that captures user text at info level,
   or any persistence layer.
-- **Retriever indirection (Phase 2+).** All corpus access from prompt builders
-  goes through `chatbot.retriever.Retriever`. Phase 1 calls `corpus.load_corpus`
-  directly; Phase 2 introduces the ABC and `WholeCorpusRetriever`. Phase 3's
-  `EmbeddingRetriever` is the swap point for Option B.
-- **LLM provider.** The current model is **Llama 3.3 70B Versatile**
-  (`llama-3.3-70b-versatile`), served by **Groq** via the `groq` SDK
-  (OpenAI-compatible chat completions). Reason: the project has no
-  Anthropic billing and the Gemini free tier was not provisioned on the
-  available Google account; Groq's free tier covers the workload with no
-  credit card.
+- **Retriever indirection.** All corpus access from prompt builders goes
+  through `chatbot.retriever.Retriever`. The `WholeCorpusRetriever` is live
+  (returns the entire corpus, byte-stable formatting). `EmbeddingRetriever` is
+  a Phase 3 stub — the swap point for Option B (semantic retrieval).
+  `prompts.build_explain_request` takes a `Retriever`, not a `CorpusBundle`.
+- **LLM provider.** The current model is **Gemini 2.5 Flash**
+  (`gemini-2.5-flash`), served by **Google AI Studio** via the
+  `google-genai` SDK (`client.aio.models.generate_content`). Reason:
+  Groq's 100K-tokens-per-rolling-24h free-tier cap was bottlenecking
+  Phase 1 eval verification; `gemini-2.5-flash` is provisioned on the
+  same Google account where `gemini-2.0-flash` had previously failed
+  with `limit:0`, and its larger daily budget supports full eval
+  sweeps in a single session.
 - **Provider-agnostic by design.** Switching back to Anthropic Claude or
   Google Gemini (or to any other provider) is a one-file change in
   `src/chatbot/llm.py`. The `LLMClient.complete(system_blocks, user_message)
@@ -90,10 +93,11 @@ pytest
   hard gates are all provider-agnostic. Do not add provider-specific logic
   outside `llm.py`.
 - **Prompt caching note.** The Anthropic-style `cache_control` field on
-  system blocks (Block 2 carries it for the corpus) is silently ignored by
-  the current Groq wrapper — Groq's free tier does not expose prompt
-  caching. Leave the `cache_control` field on the block: it costs nothing
-  and is the right setting to inherit on a future swap back to Claude.
+  system blocks (Block 2 carries it for the corpus) is silently ignored
+  by the Gemini wrapper — `google-genai`'s `generate_content` does not
+  consume it. Leave the `cache_control` field on the block: it costs
+  nothing and is the right setting to inherit on a future swap back
+  to Claude.
 
 ## Layout
 

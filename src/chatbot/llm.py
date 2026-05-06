@@ -1,32 +1,31 @@
-"""Groq SDK wrapper.
+"""Google Gemini SDK wrapper.
 
 The external interface (`LLMClient.complete(system_blocks, user_message) -> str`)
-is unchanged from the prior Anthropic / Gemini implementations, so callers do
-not know the provider changed. The Anthropic-shaped `cache_control` field on
-system blocks is silently ignored (Groq's free tier does not expose prompt
-caching, and the corpus is small).
+is unchanged from the prior Anthropic / Gemini 2.0 / Groq implementations, so
+callers do not know the provider changed. The Anthropic-shaped `cache_control`
+field on system blocks is silently ignored — Gemini does not consume it.
 
 The three system blocks (rules, corpus, per-request prediction context) are
-concatenated into a single system message at the front of the chat completion's
-messages list (OpenAI-compatible message shape).
+concatenated into a single `system_instruction` on the GenerateContentConfig.
 """
 
 from __future__ import annotations
 
 import os
 
-from groq import AsyncGroq
+from google import genai
+from google.genai import types
 
 
 class LLMClient:
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "llama-3.3-70b-versatile",
+        model: str = "gemini-2.5-flash",
         max_tokens: int = 1024,
     ) -> None:
-        key = api_key or os.environ.get("GROQ_API_KEY")
-        self._client = AsyncGroq(api_key=key)
+        key = api_key or os.environ.get("GOOGLE_API_KEY")
+        self._client = genai.Client(api_key=key)
         self.model_name = model
         self.max_tokens = max_tokens
 
@@ -38,15 +37,15 @@ class LLMClient:
         system_text = "\n\n".join(
             block["text"] for block in system_blocks if block.get("type") == "text"
         )
-        response = await self._client.chat.completions.create(
+        response = await self._client.aio.models.generate_content(
             model=self.model_name,
-            messages=[
-                {"role": "system", "content": system_text},
-                {"role": "user", "content": user_message},
-            ],
-            max_tokens=self.max_tokens,
+            contents=user_message,
+            config=types.GenerateContentConfig(
+                system_instruction=system_text,
+                max_output_tokens=self.max_tokens,
+            ),
         )
-        choice = response.choices[0] if response.choices else None
-        if choice is None or choice.message is None or choice.message.content is None:
+        text = response.text
+        if text is None:
             return ""
-        return choice.message.content.strip()
+        return text.strip()

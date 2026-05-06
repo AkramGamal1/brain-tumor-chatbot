@@ -540,3 +540,41 @@ safety architecture is provider-agnostic by construction. Anthropic-style
 `cache_control` blocks are still emitted by the prompt builder and silently
 ignored by the Groq wrapper, so a swap back to Claude or to Gemini (once
 billing / provisioning is sorted) is a one-file change.
+
+---
+
+## Addendum (Phase 2 mid-flight): provider swap to Gemini 2.5 Flash
+
+The Groq free tier's 100K-tokens-per-rolling-24h cap was bottlenecking
+Phase 1 eval verification — a full 7-gate sweep cost ~45K and the window
+aged at ~70 tokens/min, so a single session could rarely run back-to-back
+evals. Mid-Phase-2.1 we re-tested Gemini's free tier (which had failed
+earlier with `limit: 0` on `gemini-2.0-flash`) and found that
+**`gemini-2.5-flash` is properly provisioned on the same account**. The
+larger daily budget supports full eval sweeps in a single session without
+chunking.
+
+The architecture has now absorbed three production-LLM swaps (four
+attempts total):
+
+1. **Anthropic Claude Haiku 4.5** (planned) — never deployed (zero
+   credit balance).
+2. **Google Gemini 2.0 Flash** (attempted) — `RESOURCE_EXHAUSTED` /
+   `limit: 0` on the free-tier quota; abandoned.
+3. **Groq / Llama 3.3 70B Versatile** — adopted; later bottlenecked by
+   the daily-token cap during Phase 1 verification.
+4. **Google Gemini 2.5 Flash** — current production model. Free tier
+   provisioned correctly (unlike 2.0 Flash); larger daily budget than
+   Groq.
+
+The "provider-agnostic by design" invariant is now fully validated:
+each swap was a one-file change to `src/chatbot/llm.py` plus the
+`LLMClient` construction in `src/chatbot/api.py`, the env-var name, the
+`.env.example`, and user-facing docs. The `Retriever` indirection, the
+system-prompt structure, the post-generation `safety_check`, the
+disclaimer pipeline, the endpoint flow, and the seven Phase 1 hard
+gates are all unchanged.
+
+Anthropic-style `cache_control` blocks are still emitted by the prompt
+builder and silently ignored by the Gemini wrapper, preserving the
+swap path back to Claude.

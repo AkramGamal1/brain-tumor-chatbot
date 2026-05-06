@@ -27,9 +27,9 @@ class ConfidenceSummary:
 
 
 GLIOMA_MENINGIOMA_OVERRIDE_TEXT = (
-    "This model has a known difficulty distinguishing glioma and meningioma, "
-    "and both appear plausible for this image. A clinician's interpretation is "
-    "essential here."
+    "CRITICAL OVERRIDE: For this prediction, you MUST include the following sentence in your response, exactly as written, on a single line:\n\n"
+    "\"The model isn't confident about distinguishing this case clearly between glioma and meningioma — please show this scan to a clinician for a definitive interpretation.\"\n\n"
+    "Both class names ('glioma' and 'meningioma') must appear together in this single sentence. Do not split them across separate sentences."
 )
 
 

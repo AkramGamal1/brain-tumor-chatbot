@@ -30,6 +30,7 @@ from chatbot.ml_client import (
     MLServiceTimeout,
     MLServiceUnavailable,
 )
+from chatbot.retriever import WholeCorpusRetriever
 from chatbot.safety_check import scan as safety_scan
 
 load_dotenv()
@@ -47,12 +48,13 @@ def _project_root() -> Path:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     state["corpus"] = load_corpus(_project_root() / "corpus")
+    state["retriever"] = WholeCorpusRetriever(state["corpus"])
     state["ml_client"] = MLClient(
         base_url=os.environ.get("ML_API_BASE_URL", "http://localhost:8000"),
     )
     state["llm_client"] = LLMClient(
-        api_key=os.environ.get("GROQ_API_KEY"),
-        model=os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile"),
+        api_key=os.environ.get("GOOGLE_API_KEY"),
+        model=os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
     )
     try:
         yield
@@ -144,7 +146,7 @@ async def explain(
     system_blocks, user_message = prompts.build_explain_request(
         prediction=prediction,
         confidence=summary,
-        corpus=state["corpus"],
+        retriever=state["retriever"],
     )
     explanation = await state["llm_client"].complete(
         system_blocks=system_blocks,

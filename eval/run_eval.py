@@ -161,7 +161,10 @@ class CaseResult:
 # --- Runner ---
 
 
-async def run_phase1() -> list[CaseResult]:
+PHASE1_CATEGORIES = ("prediction", "ml_failure", "image")
+
+
+async def run_phase1(categories: tuple[str, ...] = PHASE1_CATEGORIES) -> list[CaseResult]:
     transport = ASGITransport(app=chatbot_api.app)
     results: list[CaseResult] = []
 
@@ -175,78 +178,81 @@ async def run_phase1() -> list[CaseResult]:
 
             real_llm = chatbot_api.state["llm_client"]
 
-            for name, check in PREDICTION_CASES:
-                fixture = load_prediction_fixture(name)
-                chatbot_api.state["ml_client"] = MockMLClient(behavior=fixture)
-                counting = CountingLLMClient(real_llm)
-                chatbot_api.state["llm_client"] = counting
+            if "prediction" in categories:
+                for name, check in PREDICTION_CASES:
+                    fixture = load_prediction_fixture(name)
+                    chatbot_api.state["ml_client"] = MockMLClient(behavior=fixture)
+                    counting = CountingLLMClient(real_llm)
+                    chatbot_api.state["llm_client"] = counting
 
-                grayscale = make_grayscale_png()
-                files = {"image": ("test.png", grayscale, "image/png")}
-                resp = await client.post("/explain", files=files, timeout=60.0)
+                    grayscale = make_grayscale_png()
+                    files = {"image": ("test.png", grayscale, "image/png")}
+                    resp = await client.post("/explain", files=files, timeout=60.0)
 
-                results.append(
-                    CaseResult(
-                        case=f"prediction:{name}",
-                        status_code=resp.status_code,
-                        body=resp.json(),
-                        llm_call_count=counting.call_count,
-                        check=check,
+                    results.append(
+                        CaseResult(
+                            case=f"prediction:{name}",
+                            status_code=resp.status_code,
+                            body=resp.json(),
+                            llm_call_count=counting.call_count,
+                            check=check,
+                        )
                     )
-                )
-                chatbot_api.state["llm_client"] = real_llm
+                    chatbot_api.state["llm_client"] = real_llm
 
-            for behavior, expected_error, expected_http, expected_retry in ML_FAILURE_CASES:
-                chatbot_api.state["ml_client"] = MockMLClient(behavior=behavior)
-                counting = CountingLLMClient(real_llm)
-                chatbot_api.state["llm_client"] = counting
+            if "ml_failure" in categories:
+                for behavior, expected_error, expected_http, expected_retry in ML_FAILURE_CASES:
+                    chatbot_api.state["ml_client"] = MockMLClient(behavior=behavior)
+                    counting = CountingLLMClient(real_llm)
+                    chatbot_api.state["llm_client"] = counting
 
-                grayscale = make_grayscale_png()
-                files = {"image": ("test.png", grayscale, "image/png")}
-                resp = await client.post("/explain", files=files, timeout=60.0)
+                    grayscale = make_grayscale_png()
+                    files = {"image": ("test.png", grayscale, "image/png")}
+                    resp = await client.post("/explain", files=files, timeout=60.0)
 
-                results.append(
-                    CaseResult(
-                        case=f"ml_failure:{behavior}",
-                        status_code=resp.status_code,
-                        body=resp.json(),
-                        expected_error=expected_error,
-                        expected_http_status=expected_http,
-                        expected_retry=expected_retry,
-                        llm_call_count=counting.call_count,
+                    results.append(
+                        CaseResult(
+                            case=f"ml_failure:{behavior}",
+                            status_code=resp.status_code,
+                            body=resp.json(),
+                            expected_error=expected_error,
+                            expected_http_status=expected_http,
+                            expected_retry=expected_retry,
+                            llm_call_count=counting.call_count,
+                        )
                     )
-                )
-                chatbot_api.state["llm_client"] = real_llm
+                    chatbot_api.state["llm_client"] = real_llm
 
-            notumor_for_force = {
-                "predicted_class": "notumor",
-                "confidence": 0.9,
-                "probabilities": {
-                    "glioma": 0.05,
-                    "meningioma": 0.03,
-                    "notumor": 0.9,
-                    "pituitary": 0.02,
-                },
-            }
-            for img_name, content_type, force, expected_status in IMAGE_CASES:
-                chatbot_api.state["ml_client"] = MockMLClient(behavior=notumor_for_force)
-                counting = CountingLLMClient(real_llm)
-                chatbot_api.state["llm_client"] = counting
+            if "image" in categories:
+                notumor_for_force = {
+                    "predicted_class": "notumor",
+                    "confidence": 0.9,
+                    "probabilities": {
+                        "glioma": 0.05,
+                        "meningioma": 0.03,
+                        "notumor": 0.9,
+                        "pituitary": 0.02,
+                    },
+                }
+                for img_name, content_type, force, expected_status in IMAGE_CASES:
+                    chatbot_api.state["ml_client"] = MockMLClient(behavior=notumor_for_force)
+                    counting = CountingLLMClient(real_llm)
+                    chatbot_api.state["llm_client"] = counting
 
-                img_bytes = (IMAGES_DIR / img_name).read_bytes()
-                files = {"image": (img_name, img_bytes, content_type)}
-                data = {"force": "true" if force else "false"}
-                resp = await client.post("/explain", files=files, data=data, timeout=60.0)
-                results.append(
-                    CaseResult(
-                        case=f"image:{img_name}:force={force}",
-                        status_code=resp.status_code,
-                        body=resp.json(),
-                        expected_status=expected_status,
-                        llm_call_count=counting.call_count,
+                    img_bytes = (IMAGES_DIR / img_name).read_bytes()
+                    files = {"image": (img_name, img_bytes, content_type)}
+                    data = {"force": "true" if force else "false"}
+                    resp = await client.post("/explain", files=files, data=data, timeout=60.0)
+                    results.append(
+                        CaseResult(
+                            case=f"image:{img_name}:force={force}",
+                            status_code=resp.status_code,
+                            body=resp.json(),
+                            expected_status=expected_status,
+                            llm_call_count=counting.call_count,
+                        )
                     )
-                )
-                chatbot_api.state["llm_client"] = real_llm
+                    chatbot_api.state["llm_client"] = real_llm
 
     return results
 
@@ -354,14 +360,19 @@ def evaluate(results: list[CaseResult]) -> dict[str, list[tuple[str, bool, str]]
     return gates
 
 
-def print_scorecard(gates: dict[str, list[tuple[str, bool, str]]]) -> bool:
+def print_scorecard(
+    gates: dict[str, list[tuple[str, bool, str]]],
+    categories: tuple[str, ...],
+) -> bool:
     all_passed = True
     print("\n" + "=" * 64)
     print("PHASE 1 EVAL SCORECARD")
+    if set(categories) != set(PHASE1_CATEGORIES):
+        print(f"  (partial run - categories: {','.join(categories)})")
     print("=" * 64)
     for gate, cases in gates.items():
         if not cases:
-            print(f"\n[{gate}] no cases")
+            print(f"\n[{gate}] skipped (no cases for selected categories)")
             continue
         passes = sum(1 for _, ok, _ in cases if ok)
         total = len(cases)
@@ -378,37 +389,68 @@ def print_scorecard(gates: dict[str, list[tuple[str, bool, str]]]) -> bool:
     return all_passed
 
 
-async def _amain(phase: int) -> int:
+def _parse_categories(raw: str | None) -> tuple[str, ...]:
+    if raw is None:
+        return PHASE1_CATEGORIES
+    requested = tuple(c.strip() for c in raw.split(",") if c.strip())
+    if not requested:
+        return PHASE1_CATEGORIES
+    unknown = [c for c in requested if c not in PHASE1_CATEGORIES]
+    if unknown:
+        raise ValueError(
+            f"unknown categories: {unknown}. "
+            f"Valid: {', '.join(PHASE1_CATEGORIES)}"
+        )
+    return requested
+
+
+async def _amain(phase: int, categories: tuple[str, ...]) -> int:
     if phase != 1:
         print(f"Phase {phase} eval is not implemented yet", file=sys.stderr)
         return 2
 
-    if not os.environ.get("GROQ_API_KEY"):
+    needs_llm = "prediction" in categories or "image" in categories
+    if needs_llm and not os.environ.get("GOOGLE_API_KEY"):
         print(
-            "GROQ_API_KEY not set — Phase 1 eval requires real LLM calls "
-            "for the safety gates 1–4. Get a free key at "
-            "https://console.groq.com/keys",
+            "GOOGLE_API_KEY not set — selected categories include LLM-calling "
+            "cases. Get a free key at https://aistudio.google.com/app/apikey",
             file=sys.stderr,
         )
         return 2
 
-    if not IMAGES_DIR.exists() or not any(IMAGES_DIR.glob("*")):
+    if "image" in categories and (not IMAGES_DIR.exists() or not any(IMAGES_DIR.glob("*"))):
         print(
             f"No image fixtures in {IMAGES_DIR}. Run: python eval/fixtures/_make_images.py",
             file=sys.stderr,
         )
         return 2
 
-    results = await run_phase1()
+    results = await run_phase1(categories)
     gates = evaluate(results)
-    return 0 if print_scorecard(gates) else 1
+    return 0 if print_scorecard(gates, categories) else 1
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--phase", type=int, default=1)
+    parser.add_argument(
+        "--categories",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated subset of case categories to run. "
+            f"Valid: {','.join(PHASE1_CATEGORIES)}. "
+            "Default: all. Useful for chunking eval across days under "
+            "the Groq free-tier 100K-tokens-per-24h cap."
+        ),
+    )
     args = parser.parse_args()
-    sys.exit(asyncio.run(_amain(args.phase)))
+    try:
+        categories = _parse_categories(args.categories)
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(2)
+    sys.exit(asyncio.run(_amain(args.phase, categories)))
 
 
 if __name__ == "__main__":

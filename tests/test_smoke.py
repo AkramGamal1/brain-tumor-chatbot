@@ -17,6 +17,7 @@ from chatbot.confidence import derive_confidence
 from chatbot.corpus import load_corpus
 from chatbot.disclaimer import DISCLAIMER, append_disclaimer
 from chatbot.image_check import looks_like_mri
+from chatbot.retriever import EmbeddingRetriever, WholeCorpusRetriever
 from chatbot.safety_check import SAFETY_REPLACEMENT, contains_crisis_language, scan
 
 
@@ -245,3 +246,38 @@ def test_corpus_extracts_crisis_response_text():
     assert bundle.crisis_response_text
     assert "988" in bundle.crisis_response_text
     assert "crisis" in bundle.crisis_response_text.lower()
+
+
+# --- retriever ---
+
+
+def test_whole_corpus_retriever_returns_full_corpus():
+    bundle = load_corpus(CORPUS_DIR)
+    retriever = WholeCorpusRetriever(bundle)
+    result = retriever.retrieve()
+    assert len(result.chunks) == len(bundle.chunks)
+    assert {c.id for c in result.chunks} == {c.id for c in bundle.chunks}
+
+
+def test_whole_corpus_retriever_format_is_byte_stable():
+    """Phase 2.1 must not perturb prompt-cache hashes."""
+    bundle = load_corpus(CORPUS_DIR)
+    expected = "# Educational corpus\n\n" + "\n\n---\n\n".join(
+        f"## {c.title}\n\n{c.body}" for c in bundle.chunks
+    )
+    retriever = WholeCorpusRetriever(bundle)
+    assert retriever.retrieve().formatted_text == expected
+
+
+def test_whole_corpus_retriever_query_is_ignored():
+    bundle = load_corpus(CORPUS_DIR)
+    retriever = WholeCorpusRetriever(bundle)
+    a = retriever.retrieve()
+    b = retriever.retrieve(query="anything")
+    assert a.formatted_text == b.formatted_text
+
+
+def test_embedding_retriever_stub_raises():
+    retriever = EmbeddingRetriever()
+    with pytest.raises(NotImplementedError):
+        retriever.retrieve()
