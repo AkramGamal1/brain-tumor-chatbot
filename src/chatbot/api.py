@@ -17,6 +17,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from chatbot import prompts
 from chatbot.confidence import derive_confidence
@@ -31,7 +32,7 @@ from chatbot.ml_client import (
     MLServiceUnavailable,
 )
 from chatbot.retriever import WholeCorpusRetriever
-from chatbot.safety_check import scan as safety_scan
+from chatbot.safety_check import contains_crisis_language, scan as safety_scan
 
 load_dotenv()
 
@@ -170,4 +171,55 @@ async def explain(
         "status": "ok",
         "prediction": prediction,
         "explanation": append_disclaimer(explanation),
+    }
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=4000)
+
+
+@app.post("/chat")
+async def chat(req: ChatRequest):
+    message = req.message.strip()
+    if not message:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "empty_message",
+                "message": "Message cannot be empty.",
+            },
+        )
+
+    if contains_crisis_language(message):
+        return {
+            "status": "ok",
+            "response": state["corpus"].crisis_response_text,
+            "safety_substituted": True,
+            "reason": "crisis",
+        }
+
+    system_blocks, user_msg = prompts.build_chat_system_prompt(
+        retriever=state["retriever"],
+        user_message=message,
+    )
+    response = await state["llm_client"].complete(
+        system_blocks=system_blocks,
+        user_message=user_msg,
+    )
+
+    safety = safety_scan(
+        user_input=message,
+        llm_output=response,
+        crisis_response_text=state["corpus"].crisis_response_text,
+    )
+    if safety.replacement is not None:
+        return {
+            "status": "ok",
+            "response": safety.replacement,
+            "safety_substituted": True,
+        }
+
+    return {
+        "status": "ok",
+        "response": append_disclaimer(response),
     }

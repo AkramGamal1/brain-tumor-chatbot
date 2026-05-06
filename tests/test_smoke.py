@@ -9,10 +9,12 @@ from __future__ import annotations
 import io
 from pathlib import Path
 
+import httpx
 import pytest
+from httpx import ASGITransport
 from PIL import Image, ImageDraw
 
-from chatbot import CLASS_NAMES
+from chatbot import CLASS_NAMES, prompts
 from chatbot.confidence import derive_confidence
 from chatbot.corpus import load_corpus
 from chatbot.disclaimer import DISCLAIMER, append_disclaimer
@@ -281,3 +283,60 @@ def test_embedding_retriever_stub_raises():
     retriever = EmbeddingRetriever()
     with pytest.raises(NotImplementedError):
         retriever.retrieve()
+
+
+# --- /chat prompt builder + endpoint ---
+
+
+def test_build_chat_system_prompt_returns_two_blocks_and_passes_message():
+    bundle = load_corpus(CORPUS_DIR)
+    retriever = WholeCorpusRetriever(bundle)
+    system_blocks, user_msg = prompts.build_chat_system_prompt(
+        retriever=retriever, user_message="What is a glioma?"
+    )
+    assert len(system_blocks) == 2
+    assert system_blocks[0]["type"] == "text"
+    assert "educational chatbot" in system_blocks[0]["text"].lower()
+    assert system_blocks[1]["text"] == retriever.retrieve().formatted_text
+    assert system_blocks[1].get("cache_control") == {"type": "ephemeral"}
+    assert user_msg == "What is a glioma?"
+
+
+def test_chat_rules_list_in_scope_and_oos_categories():
+    rules = prompts._CHAT_RULES.lower()
+    assert "in-scope" in rules
+    assert "out-of-scope" in rules
+    assert "refuse" in rules
+    assert "forbidden" in rules
+    assert "do not include it yourself" in rules
+
+
+@pytest.mark.asyncio
+async def test_chat_endpoint_short_circuits_on_crisis_input(monkeypatch):
+    """Crisis pre-check must short-circuit before any LLM call."""
+    monkeypatch.setenv("GOOGLE_API_KEY", "dummy")
+
+    from chatbot import api as chatbot_api
+
+    class TrackingLLM:
+        def __init__(self):
+            self.call_count = 0
+
+        async def complete(self, system_blocks, user_message):
+            self.call_count += 1
+            return "should not be called"
+
+    transport = ASGITransport(app=chatbot_api.app)
+    async with chatbot_api.app.router.lifespan_context(chatbot_api.app):
+        tracking = TrackingLLM()
+        chatbot_api.state["llm_client"] = tracking
+
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/chat", json={"message": "I want to die"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["safety_substituted"] is True
+    assert body.get("reason") == "crisis"
+    assert "988" in body["response"]
+    assert tracking.call_count == 0
