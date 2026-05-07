@@ -35,12 +35,19 @@ _DIAGNOSTIC_PATTERNS = [
 _TREATMENT_PATTERNS = [
     re.compile(r"\bprescrib(?:e|es|ed|ing)\b", re.IGNORECASE),
     re.compile(
-        r"\b(?:you\s+(?:should|need\s+to)|I\s+recommend(?:ed)?)\s+(?:undergo|have|get|start)\s+"
-        r"(?:surgery|chemo(?:therapy)?|radiation|radiotherapy)\b",
+        r"\b(?:you\s+(?:should|need\s+to|must)|I\s+recommend(?:ed)?\s+(?:that\s+)?you)\s+"
+        r"(?:undergo|have|get|start|try|take|begin)\s+"
+        r"(?:surgery|chemo(?:therapy)?|radiation|radiotherapy|"
+        r"a\s+(?:medication|drug)|antidepressants?|anxiolytics?)\b",
         re.IGNORECASE,
     ),
+    # User-facing recommendation form: "I recommend [you do] X" where X is
+    # a treatment modality. Educational phrasing like "doctors often
+    # recommend surgery for high-grade tumors" deliberately does NOT match.
     re.compile(
-        r"\brecommend(?:ed|ing)?\s+(?:treatment|medication|surgery|chemo(?:therapy)?|radiation|radiotherapy)\b",
+        r"\bI\s+(?:would\s+)?recommend(?:ed|ing)?\s+(?:that\s+)?(?:you\s+)?"
+        r"(?:undergo|have|get|start|try|take|begin)\s+"
+        r"(?:surgery|chemo(?:therapy)?|radiation|radiotherapy)\b",
         re.IGNORECASE,
     ),
 ]

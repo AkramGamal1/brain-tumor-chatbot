@@ -167,11 +167,48 @@ def test_safety_blocks_diagnostic_phrasing():
 def test_safety_blocks_treatment_phrasing():
     r = scan(
         user_input="",
-        llm_output="The recommended treatment is surgery followed by chemotherapy.",
+        llm_output="You should get surgery for this.",
         crisis_response_text="CRISIS",
     )
     assert r.passed is False
     assert r.replacement == SAFETY_REPLACEMENT
+
+
+def test_safety_blocks_user_targeted_recommendation():
+    r = scan(
+        user_input="",
+        llm_output="I recommend you start chemotherapy as soon as possible.",
+        crisis_response_text="CRISIS",
+    )
+    assert r.passed is False
+
+
+def test_safety_allows_educational_treatment_mention():
+    """Generic 'doctors often recommend X for Y' is now in-scope education."""
+    r = scan(
+        user_input="",
+        llm_output=(
+            "Doctors often recommend surgery for high-grade gliomas, "
+            "while watchful waiting may be appropriate for some small, "
+            "asymptomatic meningiomas."
+        ),
+        crisis_response_text="CRISIS",
+    )
+    assert r.passed is True
+
+
+def test_safety_allows_informational_mental_health_content():
+    r = scan(
+        user_input="I am scared about my diagnosis",
+        llm_output=(
+            "Many people experience anxiety and low mood after receiving "
+            "imaging results. Talking to a therapist or joining a support "
+            "group can help. If feelings of hopelessness persist, please "
+            "reach out to a clinician."
+        ),
+        crisis_response_text="CRISIS",
+    )
+    assert r.passed is True
 
 
 def test_safety_blocks_ruling_out():
@@ -349,6 +386,7 @@ def test_chat_rules_list_in_scope_and_oos_categories():
 async def test_chat_endpoint_short_circuits_on_crisis_input(monkeypatch):
     """Crisis pre-check must short-circuit before any LLM call."""
     monkeypatch.setenv("GOOGLE_API_KEY", "dummy")
+    monkeypatch.setenv("RETRIEVER", "whole_corpus")
 
     from chatbot import api as chatbot_api
 
@@ -373,4 +411,40 @@ async def test_chat_endpoint_short_circuits_on_crisis_input(monkeypatch):
     assert body["safety_substituted"] is True
     assert body.get("reason") == "crisis"
     assert "988" in body["response"]
+    # Crisis substitution must NOT carry the educational disclaimer.
+    assert DISCLAIMER not in body["response"]
     assert tracking.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_chat_endpoint_appends_disclaimer_on_forbidden_pattern_substitution(
+    monkeypatch,
+):
+    """L1 fix: SAFETY_REPLACEMENT path now carries the disclaimer."""
+    monkeypatch.setenv("GOOGLE_API_KEY", "dummy")
+    monkeypatch.setenv("RETRIEVER", "whole_corpus")
+
+    from chatbot import api as chatbot_api
+
+    class ForbiddenLLM:
+        async def complete(self, system_blocks, user_message):
+            # This trips the diagnostic-claim regex.
+            return "Based on what you describe, you have a glioma."
+
+    transport = ASGITransport(app=chatbot_api.app)
+    async with chatbot_api.app.router.lifespan_context(chatbot_api.app):
+        chatbot_api.state["llm_client"] = ForbiddenLLM()
+
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/chat",
+                json={"message": "Tell me what's happening with my brain"},
+            )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["safety_substituted"] is True
+    assert body.get("reason") != "crisis"
+    # L1 fix: the SAFETY_REPLACEMENT path now carries the disclaimer.
+    assert DISCLAIMER in body["response"]
+    assert SAFETY_REPLACEMENT.split(".")[0] in body["response"]

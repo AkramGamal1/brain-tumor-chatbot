@@ -36,7 +36,11 @@ from chatbot.ml_client import (
     MLServiceUnavailable,
 )
 from chatbot.retriever import EmbeddingRetriever, Retriever, WholeCorpusRetriever
-from chatbot.safety_check import contains_crisis_language, scan as safety_scan
+from chatbot.safety_check import (
+    SAFETY_REPLACEMENT,
+    contains_crisis_language,
+    scan as safety_scan,
+)
 
 load_dotenv()
 
@@ -176,10 +180,14 @@ async def explain(
         crisis_response_text=state["corpus"].crisis_response_text,
     )
     if safety.replacement is not None:
+        # /explain has user_input="", so the only substitution path that can
+        # fire here is the forbidden-pattern path (SAFETY_REPLACEMENT). The
+        # disclaimer is appropriate on this path; the crisis path (where the
+        # disclaimer would be jarring) doesn't reach /explain.
         return {
             "status": "ok",
             "prediction": prediction,
-            "explanation": safety.replacement,
+            "explanation": append_disclaimer(safety.replacement),
             "safety_substituted": True,
         }
 
@@ -229,9 +237,16 @@ async def chat(req: ChatRequest):
         crisis_response_text=state["corpus"].crisis_response_text,
     )
     if safety.replacement is not None:
+        # Forbidden-pattern path: append disclaimer. Crisis path: do not —
+        # appending an educational disclaimer to a crisis message is jarring
+        # and inappropriate.
+        if safety.replacement == SAFETY_REPLACEMENT:
+            substituted = append_disclaimer(safety.replacement)
+        else:
+            substituted = safety.replacement
         return {
             "status": "ok",
-            "response": safety.replacement,
+            "response": substituted,
             "safety_substituted": True,
         }
 
