@@ -1,215 +1,151 @@
-# HANDOFF — end of Day 1, ready for Day 2 manual eval
+# HANDOFF — Branch B done, only verification remains
 
 ## TL;DR
 
-**Day 1 is done.** Commits `3a4c0c0` (2.1) and `5d938a7` (2.2) landed
-on `experiment/gemini`. The chatbot has both endpoints (`/explain`,
-`/chat`), Phase 1 eval passes 7/7, and `eval/prompts.yaml` is in place
-ready for the Day 2 manual scoring run.
+**The chatbot is feature-complete for graduation.** Phases 1, 2, and 3A
+all landed earlier; Branch B (semantic retrieval + corpus expansion +
+expanded scope + L1/L2 fixes) and a UI polish pass landed today. Local
+tests are 37/37 passing and retrieval spot-checks at 10/12 hits in
+top-5.
 
-**Day 2 is the manual eval.** Hand-paste each of the 15 prompts in
-`eval/prompts.yaml` into `POST /chat`, score against the
-`pass_criteria` / `fail_signals` for each, and commit a scorecard as
-**Commit 2.3**.
+**One small thing left, blocked on quota:** Phase 1 + Phase 2 v2 eval
+reruns and the `/explain` end-to-end test through the UI. Free-tier
+Gemini quota (20 req/day on `gemini-2.5-flash-lite` for this account)
+was exhausted today by Branch B development. Resume after midnight US
+Pacific.
 
-**Day 3 is Phase 3 Branch A** — static HTML demo page +
-end-to-end test against the real parent ML on `localhost:8000`.
-
-## Commits on this branch (newest first)
+## Commits since the last HANDOFF (newest first)
 
 | Commit | Title |
 |---|---|
-| `5d938a7` | **Commit 2.2:** `/chat` endpoint with chat-specific system prompt. |
-| `3a4c0c0` | **Commit 2.1:** Retriever + Gemini 2.5 swap + override-text fix + `eval/prompts.yaml`. |
-| `605459d` | **Phase 1 close-out:** `/explain` passes all seven hard gates. |
+| `d50bcde` | UI polish + LLM error handling + `/health` readiness fields. |
+| `57ab233` | Phase 2 eval refresh: +10 prompts for expanded scope and L1/L2 regression. |
+| `5bba71a` | Loosen prompt + `safety_check` for expanded scope; bundle L1/L2 fixes. |
+| `cc53896` | Corpus expansion: 12 → 38 pages covering full patient education ground. |
+| `5fe1a9e` | Branch B mechanics: `EmbeddingRetriever` (sentence-transformers + numpy). |
+| `40e4d9d` | **Phase 3 Branch A:** static demo UI mounted at `/`. |
+| `1458881` | `docs/LIMITATIONS.md` — three Phase 2 fails documented. |
+| `1cc91ca` | **Commit 2.3:** Phase 2 manual eval scorecard (12/15). |
 
-### What landed in `3a4c0c0` (Commit 2.1)
+## Branch B summary
 
-12 files, +571 / −144. Bundle:
+- **Retrieval:** `EmbeddingRetriever` runs locally on
+  `sentence-transformers/all-MiniLM-L6-v2` (~80 MB on disk, CPU only,
+  ~30 s first-run model load, ~30 ms per query thereafter). Numpy
+  in-memory cosine similarity over page-level chunks, top-k = 5,
+  always-include scaffolding for `/explain`. Switchable via `RETRIEVER`
+  env var (`embedding` default, `whole_corpus` fallback).
+- **Corpus:** 12 → 38 pages. New categories: mental health
+  (informational), patient journey, educational treatment overviews,
+  practical life, tumor-type depth, caregivers, nutrition. Each new
+  page closes with vetted external links (NCI, NHS, Mayo, NAMI, ACS,
+  ABTA, CancerCare, ClinicalTrials.gov) and a "general info, not
+  specific advice for your situation" guard sentence.
+- **Scope:** `_CHAT_RULES` now allows informational mental-health and
+  treatment content (e.g. "doctors often consider X for Y") while
+  still refusing prescriptive advice ("you should get surgery"),
+  user-targeted diagnosis (medical OR mental-health), and prognosis.
+  `safety_check._TREATMENT_PATTERNS` narrowed to user-targeted
+  recommendation forms only — generic third-person education passes.
+- **L1 fix:** safety substitution now appends the disclaimer when
+  `safety.replacement == SAFETY_REPLACEMENT`. Crisis path
+  (`crisis_response_text`) deliberately stays disclaimer-free.
+- **L2 fix:** new "Refusal style — gentle, short, warm when warranted"
+  section in `_CHAT_RULES` instructs a one-sentence warm
+  acknowledgement before the redirect on frightened-user prompts.
+- **Eval refresh:** 15 → 25 prompts. Original 15 preserved verbatim;
+  10 new prompts cover mental-health-in-scope, patient-journey,
+  treatment-overview, practical-life, plus L1/L2 regression. New
+  `mental_health_oos` category for user-targeted diagnostic requests.
+- **UI polish:** scope banner, suggestion chips, friendly error labels
+  with retry hints, copy-to-clipboard on responses, mobile spacing,
+  `/health` footer info.
+- **Error handling:** Gemini SDK exceptions now translate to clean
+  JSON 503 with `error: "llm_rate_limited" / "llm_unavailable" /
+  "llm_service_error"` and `retry_suggested: true`. Fixes the
+  "non-JSON response" the UI was showing when quota hit.
 
-- `src/chatbot/retriever.py` (new) — `Retriever` ABC,
-  `WholeCorpusRetriever` (live, byte-stable formatting),
-  `EmbeddingRetriever` stub (Phase 3 Branch B trigger).
-- `src/chatbot/prompts.py` — `build_explain_request` consumes
-  `Retriever`. Notumor rule re-framed to be confidence-symmetric
-  (literal "does not mean healthy / no disease" sentence is mandatory
-  at every band — fix for the high-conf regression observed on
-  flash-lite).
-- `src/chatbot/api.py` — retriever wired in lifespan; Gemini env
-  vars (`GOOGLE_API_KEY`, `GEMINI_MODEL`).
-- `src/chatbot/llm.py` — Gemini SDK rewrite via
-  `google.genai.Client.aio.models.generate_content`. External
-  `complete(system_blocks, user_message) -> str` signature unchanged.
-- `src/chatbot/confidence.py` — gate-2 fix:
-  `GLIOMA_MENINGIOMA_OVERRIDE_TEXT` rewritten as a directive that
-  mandates a verbatim sentence colocating "glioma" and "meningioma"
-  within ~17 chars on a single line.
-- `tests/test_smoke.py` — 4 retriever tests (suite 22 → 26).
-- `eval/run_eval.py` — `--categories` flag for chunked-eval; precheck
-  requires `GOOGLE_API_KEY`.
-- `eval/prompts.yaml` (new) — 15 manual-eval prompts:
-  `in_scope` (3), `adjacent_medical_oos` (5), `crisis` (3),
-  `prompt_injection` (4). Each prompt carries `id`, `category`,
-  `gate`, `prompt`, `pass_criteria`, `fail_signals`. Crisis prompts
-  also carry `triggers_phrase` matching `safety_check._CRISIS_PHRASES`.
-- `pyproject.toml` — `groq` removed, `google-genai>=0.8.0,<2.0` added.
-- `.env.example` — Gemini-shape placeholder.
-- `CLAUDE.md`, `docs/chatbot-plan.md` — invariants and plan addendum
-  updated for the Gemini 2.5 swap.
+## To-do tomorrow (when quota resets)
 
-### What landed in `5d938a7` (Commit 2.2)
+```powershell
+.\.venv\Scripts\Activate.ps1
 
-3 files, +202 / −2:
+# 1. Phase 1 eval — 7/7 gates under EmbeddingRetriever + 38-page corpus
+python eval/run_eval.py --phase 1
 
-- `src/chatbot/prompts.py` — `_CHAT_RULES` system prompt with
-  explicit in-scope topics, OOS refusal categories, refusal template,
-  and a defense-in-depth forbidden list mirroring `/explain`.
-  `build_chat_system_prompt(retriever, user_message)` returns two
-  system blocks (rules + corpus with `cache_control`).
-- `src/chatbot/api.py` — `POST /chat` with `ChatRequest(message)`
-  validator. Flow:
-  `crisis pre-check → retriever → LLM → safety_scan →
-  disclaimer append → return`. Crisis pre-check on user input
-  short-circuits before any LLM cost.
-- `tests/test_smoke.py` — 3 new tests (suite 26 → 29):
-  prompt-builder structure, `_CHAT_RULES` content markers, and an
-  ASGI test that verifies `/chat` short-circuits on crisis input
-  with **zero LLM calls** (returns `safety_substituted=true` +
-  `reason="crisis"` + 988 in body).
+# 2. Phase 2 v2 — 25 prompts, score against pass_criteria/fail_signals
+uvicorn chatbot.api:app --port 8001
+python eval/_run_chat_responses.py
+# → manually score responses in eval/_chat_responses.json against
+#   eval/prompts.yaml, write a new eval/scorecard.md (overwriting v1
+#   or saving as scorecard-v2.md). Pay particular attention to:
+#   - mental_health_oos_01 (user-targeted refused, informational allowed)
+#   - adjacent_medical_oos_06_frightened (L2 fix — warm acknowledgement)
+#   - prompt_injection_05_disclaimer_bypass (L1 fix — disclaimer present)
+#   - the original adjacent_medical_oos_03 (was the L2 failure case)
 
-Manual smoke at commit time: 3 real `/chat` calls via ASGI
-(in-scope glioma, OOS medical, OOS off-topic) — all returned the
-expected shapes with disclaimer appended.
+# 3. /explain end-to-end through the UI
+# Start the parent ML on localhost:8000 first.
+uvicorn chatbot.api:app --port 8001     # in this repo
+# In a browser: http://localhost:8001/
+# Upload a real grayscale MRI; verify success path renders explanation
+# with disclaimer styled as a trailing italic block. Then upload a
+# color image to see the image_warning + force=true flow.
+```
 
-## Verification at end of Day 1
+## Out of scope (deliberately deferred)
 
-- `pytest tests/test_smoke.py -v`: **29/29 PASS**.
-- `python eval/run_eval.py --phase 1`: **7/7 gates PASS** on
-  `gemini-2.5-flash-lite` (verified post-2.1; 2.2 only added
-  `/chat`, did not touch the `/explain` path).
-
-## Day 2 — manual Phase 2 eval (the scorecard run)
-
-**Goal:** score all 15 prompts in `eval/prompts.yaml` against their
-`pass_criteria` / `fail_signals` and produce a scorecard.
-
-1. Make sure `.env` has `GEMINI_MODEL=gemini-2.5-flash-lite` and a
-   live `GOOGLE_API_KEY`.
-2. Start the chatbot:
-   `uvicorn chatbot.api:app --reload --port 8001`. Parent ML does
-   NOT need to be running — `/chat` does not call it.
-3. For each prompt in `eval/prompts.yaml`, POST to
-   `http://localhost:8001/chat` with body
-   `{"message": "<the prompt text>"}`. Inspect the response.
-4. Score against `pass_criteria` (all must hold) and `fail_signals`
-   (any one observed = fail). A response that hits any fail signal
-   fails even if pass criteria are met.
-5. Build a scorecard (markdown or yaml) recording, per prompt:
-   `id`, `pass`/`fail`, observed response excerpt, and the
-   specific failed criterion or fail signal if applicable.
-6. **Commit the scorecard as Commit 2.3.** Suggested message:
-   ```
-   Commit 2.3: Phase 2 manual eval scorecard.
-   15 prompts scored against the four hard gates
-   (in_scope_answered, oos_refused, crisis_handled, no_forbidden).
-   Failed gates documented for Phase 3's docs/LIMITATIONS.md.
-   ```
-
-### Token-budget note for Day 2
-
-Gemini Flash-Lite free tier is **~250 requests/day** for this
-account. 15 prompts plus a comfortable buffer for re-runs and
-sanity checks fits well inside that. **No automated runner** —
-this is manual by design (revisited and locked: see "Compression
-decisions" below).
-
-**Important constraint:** do not make any non-eval LLM calls
-during the Day 2 session. Save the budget for the 15 prompts and
-re-runs. Tonight's session ends before any further LLM calls.
-
-## Day 3 — Phase 3 Branch A
-
-Branch A = single-file static UI mounted via FastAPI's
-`StaticFiles`. It is the **graduation deliverable**. Branch B
-(`EmbeddingRetriever` + semantic retrieval) is deferred
-post-graduation.
-
-Tasks:
-
-1. Add a static HTML demo page (one HTML file, vanilla JS, no
-   build step) that hits `/explain` and `/chat`. Mount via
-   `app.mount("/", StaticFiles(directory=..., html=True))` (or
-   under `/ui` if root collides with anything).
-2. Bring up the parent ML on `http://localhost:8000` and run
-   real end-to-end tests:
-   - Upload a real grayscale MRI through the UI to `/explain`.
-   - Try a non-MRI image to verify the `image_warning` flow.
-   - Try `force=true` override to verify the bypass.
-   - Hit `/chat` from the UI with an in-scope, OOS, and crisis
-     message.
-3. If any of the Phase 2 gates failed in Day 2's scorecard,
-   create `docs/LIMITATIONS.md` and document them. Phase 3 ships
-   regardless.
-4. Commit Phase 3 work in the natural number of commits — no
-   pre-determined message structure.
-
-## LLM provider state
-
-- **Active model:** `gemini-2.5-flash-lite` (set in `.env`).
-  Retained for Day 2 evaluation consistency — switching mid-eval
-  would invalidate scoring.
-- `gemini-2.5-flash`: was 503-UNAVAILABLE through Day 1.
-  Re-try periodically. Prompts are tuned to pass on either model.
-- `gemini-2.5-pro`: free-tier `limit:0` for this account (not
-  provisioned).
-- Provider-agnostic interface in `llm.py` preserved — switching
-  models is a `.env` change.
-
-## Compression decisions (locked, do not revisit)
-
-- Phase 2 eval is **manual**, not automated. The three-commit
-  Phase 2 structure is preserved: 2.1 (retriever + ancillary
-  bundle), 2.2 (`/chat`), 2.3 (manual scorecard). The prompts file
-  landed inside 2.1, **not** as a separate 2.3a — there is no 2.3a.
-- Phase 2 categories trimmed 7 → 4: keep `in_scope`,
-  `adjacent_medical_oos`, `crisis`, `prompt_injection`. Dropped
-  three (`in_scope_emotional`, `adjacent_admin_oos`, `off_topic`)
-  as future work.
-- Phase 3 ships **Branch A unconditionally**. Failed Phase 2 gates
-  become entries in `docs/LIMITATIONS.md`. Branch B is deferred
-  post-graduation.
+- **Multi-turn chat history.** Adding state breaks the
+  "stateless service" CLAUDE.md invariant and introduces session
+  storage / PHI handling concerns. ~50–100 lines if you change your
+  mind, but it's a deliberate liability decision to keep it stateless.
+- **Fine-tuning on user prompts.** Free-tier Gemini doesn't expose
+  fine-tuning, and training on user inputs in a medical chatbot is a
+  privacy minefield. The right "learning" mechanism for this system is
+  corpus expansion — the EmbeddingRetriever picks up new pages
+  automatically at next startup.
+- **Phase 3 Branch B as originally framed (semantic retrieval = Branch
+  B).** Already shipped — what was originally "deferred" Branch B
+  landed in `5fe1a9e`. There is no longer a deferred Branch B.
 
 ## Files that ground future sessions
 
-- `docs/chatbot-plan.md` — full implementation plan + provider-swap
-  addenda.
-- `docs/INTEGRATION.md` — front-end integration guide (Phase 1
-  contract).
-- `CLAUDE.md` — chatbot-side cross-cutting invariants.
-- `eval/prompts.yaml` — 15-prompt manual eval input.
-- `reference/CLAUDE.md` and `reference/README.md` — read-only
-  snapshots of the parent ML repo's docs. **Never modify these.**
-- `git show 5d938a7` — Commit 2.2.
-- `git show 3a4c0c0` — Commit 2.1.
-- `git show 605459d` — Phase 1 close-out.
+- `CLAUDE.md` — chatbot-side cross-cutting invariants. **Updated for
+  Branch B** would be nice if you have time; current invariants still
+  hold but `WholeCorpusRetriever live; EmbeddingRetriever stub` is
+  now stale.
+- `docs/chatbot-plan.md` — the original implementation plan.
+- `docs/INTEGRATION.md` — front-end integration guide. Last refreshed
+  in Branch A; should be re-read after Branch B to catch any /chat
+  shape drift.
+- `docs/LIMITATIONS.md` — L1 and L2 marked "FIX LANDED, eval pending".
+  Update to "FIX LANDED, eval verified" once tomorrow's run confirms.
+- `eval/prompts.yaml` — 25-prompt manual eval input.
+- `eval/scorecard.md` — v1 scorecard against the 12-page corpus.
+  Refresh / replace tomorrow.
+- `reference/CLAUDE.md`, `reference/README.md` — read-only snapshots
+  of the parent ML repo's docs. **Never modify.**
 
 ## State-of-the-machine reminders
 
-- **Parent ML API:** set up locally on `http://localhost:8000`,
-  not required for Day 2's `/chat` work; required for Day 3's
-  end-to-end testing. `/predict`'s multipart field is `file`.
-- **Branch:** `experiment/gemini`. Last commit `5d938a7`.
+- **Branch:** `experiment/gemini`. Last commit `d50bcde`.
+- **Active model:** `.env` says `gemini-2.5-flash-lite`. If `/health`
+  reports a different model, a shell environment variable is
+  overriding the `.env` (load_dotenv defaults to non-override).
+- **Free-tier quota:** ~20 req/day on `gemini-2.5-flash-lite`. Plan
+  the Phase 2 v2 run carefully — 25 prompts plus a couple re-runs is
+  exactly at the budget edge.
+- **Parent ML API:** local on `http://localhost:8000`, NOT required
+  for `/chat`; required for `/explain` end-to-end. `/predict`'s
+  multipart field is `file`.
+- **Static UI:** mounted at `GET /`. Source at
+  `src/chatbot/static/index.html`. Edits are picked up on page reload
+  (no server restart needed for HTML changes).
 
 ## Hygiene note
 
-Carried forward — three keys still pending revocation:
-
-- One Anthropic key (zero-balance, inert).
-- Two Google Gemini keys (Gemini 2.0 / 1.5 provisioning debug).
-- A fourth Google key briefly leaked into `.env.example` was
-  rotated by the user mid-session and is now invalid.
-
-Revoke at:
+Carried forward — three keys still pending revocation. Nothing has
+changed since the prior HANDOFF on this point. Revoke at:
 
 - `https://console.anthropic.com/settings/keys`
 - `https://aistudio.google.com/app/apikey`
