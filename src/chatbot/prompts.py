@@ -103,13 +103,22 @@ def _format_prediction_context(
     return "\n".join(lines)
 
 
+_EXPLAIN_ALWAYS_INCLUDE = (
+    "what-this-model-cannot-tell-you",
+    "model-capabilities",
+    "confidence-meaning",
+)
+
+
 def build_explain_request(
     prediction: dict,
     confidence: ConfidenceSummary,
     retriever: Retriever,
 ) -> tuple[list[dict], str]:
     """Return (system_blocks, user_message) for the LLM call."""
-    retrieval = retriever.retrieve()
+    query = f"{confidence.predicted_class} brain MRI prediction"
+    always_include = _EXPLAIN_ALWAYS_INCLUDE + (confidence.predicted_class,)
+    retrieval = retriever.retrieve(query=query, always_include_ids=always_include)
     system_blocks = [
         {"type": "text", "text": _EXPLAIN_RULES},
         {
@@ -203,7 +212,7 @@ def build_chat_system_prompt(
     user_message: str,
 ) -> tuple[list[dict], str]:
     """Return (system_blocks, user_message) for a /chat LLM call."""
-    retrieval = retriever.retrieve()
+    retrieval = retriever.retrieve(query=user_message)
     system_blocks = [
         {"type": "text", "text": _CHAT_RULES},
         {

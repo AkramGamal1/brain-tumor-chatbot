@@ -279,10 +279,44 @@ def test_whole_corpus_retriever_query_is_ignored():
     assert a.formatted_text == b.formatted_text
 
 
-def test_embedding_retriever_stub_raises():
-    retriever = EmbeddingRetriever()
-    with pytest.raises(NotImplementedError):
-        retriever.retrieve()
+def test_embedding_retriever_returns_topk_for_query():
+    bundle = load_corpus(CORPUS_DIR)
+    retriever = EmbeddingRetriever(bundle, top_k=3)
+    retriever.build()
+    result = retriever.retrieve("What is a glioma?")
+    assert 1 <= len(result.chunks) <= 5  # top_k=3 + always_include_ids may merge
+    ids = {c.id for c in result.chunks}
+    assert "glioma" in ids, f"glioma should rank top-3 for its own definition, got {ids}"
+
+
+def test_embedding_retriever_falls_back_to_full_corpus_when_no_query():
+    bundle = load_corpus(CORPUS_DIR)
+    retriever = EmbeddingRetriever(bundle, top_k=3)
+    retriever.build()
+    result = retriever.retrieve(None)
+    assert len(result.chunks) == len(bundle.chunks)
+
+
+def test_embedding_retriever_force_includes_ids():
+    bundle = load_corpus(CORPUS_DIR)
+    retriever = EmbeddingRetriever(bundle, top_k=2)
+    retriever.build()
+    # Query that has nothing to do with the crisis page; force-include it.
+    result = retriever.retrieve(
+        "How does an MRI scan work?",
+        always_include_ids=("crisis-resources",),
+    )
+    assert "crisis-resources" in {c.id for c in result.chunks}
+
+
+def test_embedding_retriever_format_preserves_corpus_order():
+    bundle = load_corpus(CORPUS_DIR)
+    retriever = EmbeddingRetriever(bundle, top_k=4)
+    retriever.build()
+    result = retriever.retrieve("brain tumor types")
+    by_idx = {c.id: i for i, c in enumerate(bundle.chunks)}
+    indices = [by_idx[c.id] for c in result.chunks]
+    assert indices == sorted(indices), "result should preserve corpus order"
 
 
 # --- /chat prompt builder + endpoint ---

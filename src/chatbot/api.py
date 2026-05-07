@@ -35,7 +35,7 @@ from chatbot.ml_client import (
     MLServiceTimeout,
     MLServiceUnavailable,
 )
-from chatbot.retriever import WholeCorpusRetriever
+from chatbot.retriever import EmbeddingRetriever, Retriever, WholeCorpusRetriever
 from chatbot.safety_check import contains_crisis_language, scan as safety_scan
 
 load_dotenv()
@@ -50,10 +50,22 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _build_retriever(corpus) -> Retriever:
+    mode = os.environ.get("RETRIEVER", "embedding").strip().lower()
+    if mode == "whole_corpus":
+        return WholeCorpusRetriever(corpus)
+    retriever = EmbeddingRetriever(
+        corpus,
+        top_k=int(os.environ.get("RETRIEVER_TOP_K", "5")),
+    )
+    retriever.build()
+    return retriever
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     state["corpus"] = load_corpus(_project_root() / "corpus")
-    state["retriever"] = WholeCorpusRetriever(state["corpus"])
+    state["retriever"] = _build_retriever(state["corpus"])
     state["ml_client"] = MLClient(
         base_url=os.environ.get("ML_API_BASE_URL", "http://localhost:8000"),
     )
