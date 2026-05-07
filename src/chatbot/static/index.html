@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Brain Tumor Chatbot — demo</title>
+  <style>
+    :root {
+      --bg: #fafafa;
+      --panel: #ffffff;
+      --text: #1f2328;
+      --muted: #57606a;
+      --border: #d0d7de;
+      --accent: #0969da;
+      --warn-bg: #fff8c5;
+      --warn-border: #d4a72c;
+      --error-bg: #ffebe9;
+      --error-border: #ff8182;
+      --crisis-bg: #fff0f3;
+      --crisis-border: #cf222e;
+      --disclaimer: #57606a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      font-size: 15px;
+      line-height: 1.5;
+      color: var(--text);
+      background: var(--bg);
+    }
+    main {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 24px 16px 64px;
+    }
+    header {
+      margin-bottom: 24px;
+    }
+    h1 {
+      font-size: 22px;
+      margin: 0 0 4px;
+    }
+    header p {
+      color: var(--muted);
+      margin: 0;
+      font-size: 14px;
+    }
+    section {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    h2 {
+      font-size: 17px;
+      margin: 0 0 12px;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    input[type="file"], textarea {
+      width: 100%;
+      font-family: inherit;
+      font-size: 14px;
+      padding: 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #fff;
+    }
+    textarea {
+      min-height: 90px;
+      resize: vertical;
+    }
+    .controls {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+    button {
+      font-family: inherit;
+      font-size: 14px;
+      padding: 8px 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #fff;
+      cursor: pointer;
+    }
+    button.primary {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .force-row {
+      display: none;
+      margin-top: 10px;
+      padding: 10px 12px;
+      background: var(--warn-bg);
+      border: 1px solid var(--warn-border);
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    .force-row.show { display: block; }
+    .result {
+      margin-top: 14px;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #f6f8fa;
+      white-space: pre-wrap;
+      font-size: 14px;
+      line-height: 1.55;
+      display: none;
+    }
+    .result.show { display: block; }
+    .result.error { background: var(--error-bg); border-color: var(--error-border); }
+    .result.warn  { background: var(--warn-bg);  border-color: var(--warn-border); }
+    .result.crisis { background: var(--crisis-bg); border-color: var(--crisis-border); }
+    .result-meta {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .disclaimer {
+      display: block;
+      margin-top: 14px;
+      padding-top: 10px;
+      border-top: 1px dashed var(--border);
+      color: var(--disclaimer);
+      font-size: 13px;
+      font-style: italic;
+    }
+    .pred-meta {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+    .spinner {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    footer {
+      margin-top: 32px;
+      font-size: 12px;
+      color: var(--muted);
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Brain Tumor Chatbot — demo</h1>
+      <p>Educational only. Four classes: glioma, meningioma, pituitary, no tumor.</p>
+    </header>
+
+    <!-- /explain -->
+    <section id="explain-section">
+      <h2>Explain an MRI prediction</h2>
+      <p style="color: var(--muted); margin: 0 0 14px; font-size: 13px;">
+        Upload an MRI image (JPEG, PNG, BMP, or TIFF, up to 10 MB). The
+        parent ML service must be running on <code>localhost:8000</code>.
+      </p>
+      <form id="explain-form">
+        <label for="explain-file">Image file</label>
+        <input type="file" id="explain-file" name="image"
+               accept="image/jpeg,image/png,image/bmp,image/tiff" required />
+        <div class="controls">
+          <button type="submit" class="primary" id="explain-submit">Explain</button>
+        </div>
+        <div class="force-row" id="explain-force-row">
+          <strong>Image plausibility check failed.</strong>
+          <span id="explain-force-reason"></span>
+          <div class="controls">
+            <button type="button" id="explain-force-submit">Submit anyway (force=true)</button>
+            <button type="button" id="explain-force-cancel">Pick a different image</button>
+          </div>
+        </div>
+      </form>
+      <div class="result" id="explain-result"></div>
+    </section>
+
+    <!-- /chat -->
+    <section id="chat-section">
+      <h2>Ask a question</h2>
+      <p style="color: var(--muted); margin: 0 0 14px; font-size: 13px;">
+        Stateless — every message is independent. Crisis language is
+        intercepted server-side.
+      </p>
+      <form id="chat-form">
+        <label for="chat-input">Your message</label>
+        <textarea id="chat-input" name="message"
+                  maxlength="4000"
+                  placeholder="e.g. What is a meningioma, in plain language?"
+                  required></textarea>
+        <div class="controls">
+          <button type="submit" class="primary" id="chat-submit">Send</button>
+          <button type="button" id="chat-clear">Clear</button>
+        </div>
+      </form>
+      <div class="result" id="chat-result"></div>
+    </section>
+
+    <footer>
+      Service is stateless. No history, no logging of message content.
+    </footer>
+  </main>
+
+  <script>
+    const DISCLAIMER = "This is not medical advice. Please consult a qualified clinician for any medical decisions.";
+
+    // ---------- helpers ----------
+
+    function setBusy(btn, busy, busyText) {
+      if (busy) {
+        btn.dataset.label = btn.textContent;
+        btn.innerHTML = '<span class="spinner"></span>' + (busyText || 'Working…');
+        btn.disabled = true;
+      } else {
+        btn.textContent = btn.dataset.label || btn.textContent;
+        btn.disabled = false;
+      }
+    }
+
+    function clearResult(el) {
+      el.className = 'result';
+      el.textContent = '';
+    }
+
+    // Renders text into el. If text contains the canonical disclaimer at the
+    // end, splits it off and styles it as a trailing italicized block.
+    function renderText(el, text) {
+      el.textContent = '';
+      const idx = text.indexOf(DISCLAIMER);
+      if (idx >= 0) {
+        const head = text.slice(0, idx).replace(/\s+$/, '');
+        const tail = text.slice(idx);
+        if (head) {
+          const headNode = document.createElement('span');
+          headNode.textContent = head;
+          el.appendChild(headNode);
+        }
+        const tailNode = document.createElement('span');
+        tailNode.className = 'disclaimer';
+        tailNode.textContent = tail;
+        el.appendChild(tailNode);
+      } else {
+        el.textContent = text;
+      }
+    }
+
+    function showError(el, message) {
+      clearResult(el);
+      el.classList.add('show', 'error');
+      const meta = document.createElement('span');
+      meta.className = 'result-meta';
+      meta.textContent = 'Error';
+      el.appendChild(meta);
+      const body = document.createElement('span');
+      body.textContent = message;
+      el.appendChild(body);
+    }
+
+    // ---------- /explain ----------
+
+    const explainForm   = document.getElementById('explain-form');
+    const explainFile   = document.getElementById('explain-file');
+    const explainSubmit = document.getElementById('explain-submit');
+    const explainResult = document.getElementById('explain-result');
+    const forceRow      = document.getElementById('explain-force-row');
+    const forceReason   = document.getElementById('explain-force-reason');
+    const forceSubmit   = document.getElementById('explain-force-submit');
+    const forceCancel   = document.getElementById('explain-force-cancel');
+
+    async function postExplain(file, force) {
+      const fd = new FormData();
+      fd.append('image', file);
+      if (force) fd.append('force', 'true');
+      const resp = await fetch('/explain', { method: 'POST', body: fd });
+      let body;
+      try { body = await resp.json(); }
+      catch (_) {
+        return { httpStatus: resp.status, body: null, parseError: true };
+      }
+      return { httpStatus: resp.status, body };
+    }
+
+    function renderExplain(httpStatus, body, parseError) {
+      clearResult(explainResult);
+      explainResult.classList.add('show');
+
+      if (parseError) {
+        showError(explainResult, 'Server returned a non-JSON response (HTTP ' + httpStatus + ').');
+        return;
+      }
+
+      // Client errors (415 / 413) and ML errors (502 / 504)
+      if (httpStatus >= 400) {
+        explainResult.classList.add('error');
+        const meta = document.createElement('span');
+        meta.className = 'result-meta';
+        meta.textContent = (body && body.error) || ('HTTP ' + httpStatus);
+        explainResult.appendChild(meta);
+        const msg = document.createElement('span');
+        msg.textContent = (body && body.message) || 'Unexpected error.';
+        explainResult.appendChild(msg);
+        if (body && body.retry_suggested) {
+          const hint = document.createElement('span');
+          hint.style.display = 'block';
+          hint.style.marginTop = '8px';
+          hint.style.fontSize = '13px';
+          hint.style.color = 'var(--muted)';
+          hint.textContent = 'You can try again.';
+          explainResult.appendChild(hint);
+        }
+        return;
+      }
+
+      // image_warning soft branch
+      if (body.status === 'image_warning') {
+        explainResult.classList.add('warn');
+        const meta = document.createElement('span');
+        meta.className = 'result-meta';
+        meta.textContent = 'Image warning';
+        explainResult.appendChild(meta);
+        const msg = document.createElement('span');
+        msg.textContent = body.reason || 'The image did not look like an MRI.';
+        explainResult.appendChild(msg);
+        if (body.force_available) {
+          forceReason.textContent = ' ' + (body.reason || '');
+          forceRow.classList.add('show');
+        }
+        return;
+      }
+
+      // Success
+      const meta = document.createElement('span');
+      meta.className = 'result-meta';
+      meta.textContent = body.safety_substituted ? 'Safety substitution' : 'Explanation';
+      explainResult.appendChild(meta);
+
+      if (body.prediction && body.prediction.predicted_class) {
+        const predMeta = document.createElement('span');
+        predMeta.className = 'pred-meta';
+        predMeta.textContent = 'Model predicted: ' + body.prediction.predicted_class;
+        explainResult.appendChild(predMeta);
+      }
+      const explanation = document.createElement('span');
+      renderText(explanation, body.explanation || '');
+      explainResult.appendChild(explanation);
+    }
+
+    explainForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      forceRow.classList.remove('show');
+      const file = explainFile.files[0];
+      if (!file) return;
+      setBusy(explainSubmit, true, 'Analyzing…');
+      try {
+        const { httpStatus, body, parseError } = await postExplain(file, false);
+        renderExplain(httpStatus, body, parseError);
+      } catch (err) {
+        showError(explainResult, 'Network error: ' + err.message);
+        explainResult.classList.add('show');
+      } finally {
+        setBusy(explainSubmit, false);
+      }
+    });
+
+    forceSubmit.addEventListener('click', async () => {
+      const file = explainFile.files[0];
+      if (!file) return;
+      forceRow.classList.remove('show');
+      setBusy(explainSubmit, true, 'Analyzing…');
+      try {
+        const { httpStatus, body, parseError } = await postExplain(file, true);
+        renderExplain(httpStatus, body, parseError);
+      } catch (err) {
+        showError(explainResult, 'Network error: ' + err.message);
+        explainResult.classList.add('show');
+      } finally {
+        setBusy(explainSubmit, false);
+      }
+    });
+
+    forceCancel.addEventListener('click', () => {
+      forceRow.classList.remove('show');
+      explainFile.value = '';
+      clearResult(explainResult);
+    });
+
+    // ---------- /chat ----------
+
+    const chatForm   = document.getElementById('chat-form');
+    const chatInput  = document.getElementById('chat-input');
+    const chatSubmit = document.getElementById('chat-submit');
+    const chatClear  = document.getElementById('chat-clear');
+    const chatResult = document.getElementById('chat-result');
+
+    async function postChat(message) {
+      const resp = await fetch('/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message }),
+      });
+      let body;
+      try { body = await resp.json(); }
+      catch (_) {
+        return { httpStatus: resp.status, body: null, parseError: true };
+      }
+      return { httpStatus: resp.status, body };
+    }
+
+    function renderChat(httpStatus, body, parseError) {
+      clearResult(chatResult);
+      chatResult.classList.add('show');
+
+      if (parseError) {
+        showError(chatResult, 'Server returned a non-JSON response (HTTP ' + httpStatus + ').');
+        return;
+      }
+      if (httpStatus >= 400) {
+        chatResult.classList.add('error');
+        const meta = document.createElement('span');
+        meta.className = 'result-meta';
+        meta.textContent = (body && body.error) || ('HTTP ' + httpStatus);
+        chatResult.appendChild(meta);
+        const msg = document.createElement('span');
+        msg.textContent = (body && body.message) || 'Unexpected error.';
+        chatResult.appendChild(msg);
+        return;
+      }
+
+      const isCrisis = body.safety_substituted && body.reason === 'crisis';
+      const isSafetySub = body.safety_substituted && !isCrisis;
+
+      if (isCrisis) chatResult.classList.add('crisis');
+
+      const meta = document.createElement('span');
+      meta.className = 'result-meta';
+      meta.textContent = isCrisis      ? 'Crisis support'
+                       : isSafetySub   ? 'Safety substitution'
+                                       : 'Reply';
+      chatResult.appendChild(meta);
+
+      const reply = document.createElement('span');
+      renderText(reply, body.response || '');
+      chatResult.appendChild(reply);
+    }
+
+    chatForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const message = chatInput.value.trim();
+      if (!message) return;
+      setBusy(chatSubmit, true, 'Sending…');
+      try {
+        const { httpStatus, body, parseError } = await postChat(message);
+        renderChat(httpStatus, body, parseError);
+      } catch (err) {
+        showError(chatResult, 'Network error: ' + err.message);
+        chatResult.classList.add('show');
+      } finally {
+        setBusy(chatSubmit, false);
+      }
+    });
+
+    chatClear.addEventListener('click', () => {
+      chatInput.value = '';
+      clearResult(chatResult);
+    });
+  </script>
+</body>
+</html>

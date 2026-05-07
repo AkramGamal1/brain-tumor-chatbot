@@ -1,11 +1,14 @@
-"""FastAPI app exposing /explain (Phase 1) and /health.
+"""FastAPI app exposing /explain, /chat, /health, and a static demo UI at /.
 
 Endpoint flow follows the plan exactly:
-  1. crisis pre-check on user input  (Phase 1 /explain has no text input)
-  2. image_check (skipped if force=true)
-  3. ml_client.predict
+  1. crisis pre-check on user input  (no text input on /explain)
+  2. image_check (skipped if force=true)  — /explain only
+  3. ml_client.predict                     — /explain only
   4. prompts → llm.complete
   5. safety_check → disclaimer append
+
+The static demo UI (src/chatbot/static/) is mounted last so the API
+routes registered above take precedence on /health, /explain, /chat.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from chatbot import prompts
@@ -223,3 +227,8 @@ async def chat(req: ChatRequest):
         "status": "ok",
         "response": append_disclaimer(response),
     }
+
+
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
+if _STATIC_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=str(_STATIC_DIR), html=True), name="static")
