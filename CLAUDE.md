@@ -62,8 +62,16 @@ pytest
   clinician can assess overall neurological health. Highest-priority safety
   rule.
 - **No diagnosis, no treatment, no prognosis.** Forbidden in the system prompt
-  and in `safety_check.scan(...)`. A safety-substituted response is returned
-  *without* the standard disclaimer.
+  and in `safety_check.scan(...)`. The forbidden-pattern substitution
+  (`SAFETY_REPLACEMENT`) now appends the disclaimer on its way out (L1 fix).
+  The crisis substitution (`crisis_response_text`) deliberately stays
+  disclaimer-free — appending an educational disclaimer to a crisis message is
+  jarring.
+- **User-targeted vs. educational.** Generic third-person education is
+  in-scope ("doctors often consider X for Y"); prescriptive advice ("you
+  should get surgery", "I recommend you start chemo") is forbidden.
+  `safety_check._TREATMENT_PATTERNS` is narrowed to user-targeted forms only —
+  educational content passes. Same asymmetry on mental-health content.
 - **Crisis substitution wins.** If the user input contains crisis indicators
   and the LLM output lacks crisis resources, `safety_check` substitutes the
   canned crisis response from `corpus/crisis-resources.md`. The crisis text is
@@ -73,10 +81,17 @@ pytest
   not add session state, request logging that captures user text at info level,
   or any persistence layer.
 - **Retriever indirection.** All corpus access from prompt builders goes
-  through `chatbot.retriever.Retriever`. The `WholeCorpusRetriever` is live
-  (returns the entire corpus, byte-stable formatting). `EmbeddingRetriever` is
-  a Phase 3 stub — the swap point for Option B (semantic retrieval).
-  `prompts.build_explain_request` takes a `Retriever`, not a `CorpusBundle`.
+  through `chatbot.retriever.Retriever`. Two implementations live in the repo:
+  `WholeCorpusRetriever` (returns the entire corpus on every call,
+  byte-stable formatting, prompt-cache friendly) and `EmbeddingRetriever`
+  (live; sentence-transformers/all-MiniLM-L6-v2 + numpy cosine similarity,
+  page-level chunks, top-k = 5, lazy-built once at lifespan startup). Default
+  is `EmbeddingRetriever`; switch via the `RETRIEVER` env var
+  (`embedding` / `whole_corpus`). `prompts.build_explain_request` and
+  `prompts.build_chat_system_prompt` both pass a query
+  (predicted-class / user-message) and the explain path uses
+  `always_include_ids` to guarantee the predicted-class page and the
+  model-capability scaffolding land in context.
 - **LLM provider.** The current model is **Gemini 2.5 Flash**
   (`gemini-2.5-flash`), served by **Google AI Studio** via the
   `google-genai` SDK (`client.aio.models.generate_content`). Reason:
@@ -103,12 +118,19 @@ pytest
 
 - `src/chatbot/` — service code. Each module has a single responsibility; see
   `docs/chatbot-plan.md` for the dependency map.
-- `corpus/` — 12 markdown pages, edited like code. Layperson tone, ≤~400 words.
+- `src/chatbot/static/` — single-file demo UI (`index.html`, vanilla JS, no
+  build step). Mounted at `GET /` via `StaticFiles`. Edits picked up on page
+  reload (no server restart needed).
+- `corpus/` — 38 markdown pages, edited like code. Layperson tone, ≤~400 words.
+  Each new page (Branch B) closes with vetted external links and a "general
+  information / not specific advice for your situation" guard sentence.
 - `eval/` — synthetic fixtures + scoring harness. `run_eval.py --phase N` is
-  the gate enforcer.
+  the Phase 1 gate enforcer; `prompts.yaml` + `_run_chat_responses.py` drive
+  the Phase 2 manual scoring run.
 - `reference/` — read-only snapshots of the parent ML repo's docs. **Never
   modify.**
 - `tests/` — `pytest` smoke tests for non-network paths.
+- `docs/` — implementation plan, integration guide, limitations log.
 
 ## Future work (not in scope yet)
 
