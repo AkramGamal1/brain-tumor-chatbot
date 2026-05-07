@@ -7,6 +7,10 @@ field on system blocks is silently ignored — Gemini does not consume it.
 
 The three system blocks (rules, corpus, per-request prediction context) are
 concatenated into a single `system_instruction` on the GenerateContentConfig.
+
+Upstream errors are translated to provider-agnostic exceptions
+(`LLMRateLimited`, `LLMUpstreamUnavailable`, `LLMServiceError`) so the API
+layer can return clean JSON responses without importing google.genai.
 """
 
 from __future__ import annotations
@@ -14,7 +18,43 @@ from __future__ import annotations
 import os
 
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
+
+
+class LLMServiceError(Exception):
+    """Generic upstream LLM failure with a user-renderable message."""
+
+    def __init__(self, user_message: str, *, status_code: int | None = None) -> None:
+        super().__init__(user_message)
+        self.user_message = user_message
+        self.status_code = status_code
+
+
+class LLMRateLimited(LLMServiceError):
+    """429 RESOURCE_EXHAUSTED — quota exhausted, retry later."""
+
+
+class LLMUpstreamUnavailable(LLMServiceError):
+    """503 UNAVAILABLE — the upstream model is temporarily down."""
+
+
+def _translate(exc: genai_errors.APIError) -> LLMServiceError:
+    code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+    if code == 429:
+        return LLMRateLimited(
+            "The chatbot has reached its daily request limit. Please try again later.",
+            status_code=429,
+        )
+    if code == 503:
+        return LLMUpstreamUnavailable(
+            "The chatbot is temporarily unavailable. Please try again in a moment.",
+            status_code=503,
+        )
+    return LLMServiceError(
+        "The chatbot ran into an unexpected upstream error. Please try again.",
+        status_code=code,
+    )
 
 
 class LLMClient:
@@ -37,14 +77,17 @@ class LLMClient:
         system_text = "\n\n".join(
             block["text"] for block in system_blocks if block.get("type") == "text"
         )
-        response = await self._client.aio.models.generate_content(
-            model=self.model_name,
-            contents=user_message,
-            config=types.GenerateContentConfig(
-                system_instruction=system_text,
-                max_output_tokens=self.max_tokens,
-            ),
-        )
+        try:
+            response = await self._client.aio.models.generate_content(
+                model=self.model_name,
+                contents=user_message,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_text,
+                    max_output_tokens=self.max_tokens,
+                ),
+            )
+        except genai_errors.APIError as exc:
+            raise _translate(exc) from exc
         text = response.text
         if text is None:
             return ""

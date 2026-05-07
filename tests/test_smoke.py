@@ -417,6 +417,33 @@ async def test_chat_endpoint_short_circuits_on_crisis_input(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_chat_endpoint_returns_clean_503_on_llm_error(monkeypatch):
+    """Quota exhaustion / upstream 503 must return JSON, not bubble as 500."""
+    monkeypatch.setenv("GOOGLE_API_KEY", "dummy")
+    monkeypatch.setenv("RETRIEVER", "whole_corpus")
+
+    from chatbot import api as chatbot_api
+    from chatbot.llm import LLMRateLimited
+
+    class RateLimitedLLM:
+        async def complete(self, system_blocks, user_message):
+            raise LLMRateLimited("Daily limit reached.", status_code=429)
+
+    transport = ASGITransport(app=chatbot_api.app)
+    async with chatbot_api.app.router.lifespan_context(chatbot_api.app):
+        chatbot_api.state["llm_client"] = RateLimitedLLM()
+
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/chat", json={"message": "What is a glioma?"})
+
+    assert resp.status_code == 503
+    body = resp.json()
+    assert body["error"] == "llm_rate_limited"
+    assert body["retry_suggested"] is True
+    assert "limit" in body["message"].lower()
+
+
+@pytest.mark.asyncio
 async def test_chat_endpoint_appends_disclaimer_on_forbidden_pattern_substitution(
     monkeypatch,
 ):

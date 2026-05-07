@@ -111,6 +111,51 @@
       font-size: 14px;
     }
     .force-row.show { display: block; }
+    .suggestions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin: 10px 0 0;
+    }
+    .suggestion {
+      font-size: 12.5px;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: #fff;
+      cursor: pointer;
+      color: var(--text);
+    }
+    .suggestion:hover { background: #eef3f9; border-color: var(--accent); }
+    .scope-banner {
+      background: #eef6ff;
+      border: 1px solid #b6d4f5;
+      border-radius: 6px;
+      padding: 10px 14px;
+      margin-bottom: 16px;
+      font-size: 13px;
+      line-height: 1.55;
+      color: #1f4068;
+    }
+    .scope-banner strong { color: #133353; }
+    .copy-btn {
+      float: right;
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 4px;
+      background: #fff;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      color: var(--muted);
+      margin-left: 8px;
+    }
+    .copy-btn:hover { color: var(--text); }
+    .retry-hint {
+      display: block;
+      margin-top: 10px;
+      font-size: 13px;
+      color: var(--muted);
+    }
     .result {
       margin-top: 14px;
       padding: 12px 14px;
@@ -166,6 +211,14 @@
       font-size: 12px;
       color: var(--muted);
       text-align: center;
+      line-height: 1.7;
+    }
+    footer code { font-size: 11px; }
+    @media (max-width: 600px) {
+      main { padding: 16px 12px 48px; }
+      section { padding: 16px; }
+      h1 { font-size: 19px; }
+      h2 { font-size: 16px; }
     }
   </style>
 </head>
@@ -175,6 +228,15 @@
       <h1>Brain Tumor Chatbot — demo</h1>
       <p>Educational only. Four classes: glioma, meningioma, pituitary, no tumor.</p>
     </header>
+
+    <div class="scope-banner">
+      <strong>What this is:</strong> a layperson-friendly chatbot that
+      explains brain-MRI predictions and answers questions about the
+      patient experience around them — what tests mean, treatment
+      categories, mental health, finding support, practical life.
+      <strong>What it is not:</strong> a clinician. It will not diagnose
+      anyone, recommend treatment, or predict outcomes.
+    </div>
 
     <!-- /explain -->
     <section id="explain-section">
@@ -215,6 +277,14 @@
                   maxlength="4000"
                   placeholder="e.g. What is a meningioma, in plain language?"
                   required></textarea>
+        <div class="suggestions" id="chat-suggestions">
+          <button type="button" class="suggestion">What is a meningioma?</button>
+          <button type="button" class="suggestion">How do I find a therapist?</button>
+          <button type="button" class="suggestion">What happens after an MRI?</button>
+          <button type="button" class="suggestion">What is radiation therapy?</button>
+          <button type="button" class="suggestion">Should I get a second opinion?</button>
+          <button type="button" class="suggestion">Can I still drive?</button>
+        </div>
         <div class="controls">
           <button type="submit" class="primary" id="chat-submit">Send</button>
           <button type="button" id="chat-clear">Clear</button>
@@ -225,6 +295,8 @@
 
     <footer>
       Service is stateless. No history, no logging of message content.
+      <br />
+      <span id="footer-info"></span>
     </footer>
   </main>
 
@@ -283,6 +355,61 @@
       el.appendChild(body);
     }
 
+    // Friendly error labels mapping the server's error codes to human strings.
+    const ERROR_LABELS = {
+      llm_rate_limited: 'Daily limit reached',
+      llm_unavailable: 'Service temporarily unavailable',
+      llm_service_error: 'Service error',
+      ml_service_unavailable: 'Analysis service unreachable',
+      ml_service_timeout: 'Analysis service timed out',
+      ml_service_error: 'Analysis service error',
+      unsupported_media: 'Unsupported file type',
+      payload_too_large: 'File too large',
+      empty_message: 'Empty message',
+    };
+
+    function renderErrorBody(el, httpStatus, body) {
+      el.classList.add('error');
+      const meta = document.createElement('span');
+      meta.className = 'result-meta';
+      const code = body && body.error;
+      meta.textContent = (code && ERROR_LABELS[code]) || code || ('HTTP ' + httpStatus);
+      el.appendChild(meta);
+      const msg = document.createElement('span');
+      msg.textContent = (body && body.message) || 'Unexpected error.';
+      el.appendChild(msg);
+      if (body && body.retry_suggested) {
+        const hint = document.createElement('span');
+        hint.className = 'retry-hint';
+        hint.textContent = 'You can try again in a moment.';
+        el.appendChild(hint);
+      }
+    }
+
+    function addCopyButton(parentResult, getText) {
+      const btn = document.createElement('button');
+      btn.className = 'copy-btn';
+      btn.type = 'button';
+      btn.textContent = 'copy';
+      btn.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(getText());
+          const old = btn.textContent;
+          btn.textContent = 'copied';
+          setTimeout(() => { btn.textContent = old; }, 1200);
+        } catch (_) {
+          btn.textContent = 'copy failed';
+        }
+      });
+      // Insert near the top of the result so the user sees it without scrolling.
+      const firstMeta = parentResult.querySelector('.result-meta');
+      if (firstMeta) {
+        firstMeta.appendChild(btn);
+      } else {
+        parentResult.prepend(btn);
+      }
+    }
+
     // ---------- /explain ----------
 
     const explainForm   = document.getElementById('explain-form');
@@ -316,25 +443,9 @@
         return;
       }
 
-      // Client errors (415 / 413) and ML errors (502 / 504)
+      // Client errors (415 / 413) and service errors (502 / 503 / 504)
       if (httpStatus >= 400) {
-        explainResult.classList.add('error');
-        const meta = document.createElement('span');
-        meta.className = 'result-meta';
-        meta.textContent = (body && body.error) || ('HTTP ' + httpStatus);
-        explainResult.appendChild(meta);
-        const msg = document.createElement('span');
-        msg.textContent = (body && body.message) || 'Unexpected error.';
-        explainResult.appendChild(msg);
-        if (body && body.retry_suggested) {
-          const hint = document.createElement('span');
-          hint.style.display = 'block';
-          hint.style.marginTop = '8px';
-          hint.style.fontSize = '13px';
-          hint.style.color = 'var(--muted)';
-          hint.textContent = 'You can try again.';
-          explainResult.appendChild(hint);
-        }
+        renderErrorBody(explainResult, httpStatus, body);
         return;
       }
 
@@ -442,14 +553,7 @@
         return;
       }
       if (httpStatus >= 400) {
-        chatResult.classList.add('error');
-        const meta = document.createElement('span');
-        meta.className = 'result-meta';
-        meta.textContent = (body && body.error) || ('HTTP ' + httpStatus);
-        chatResult.appendChild(meta);
-        const msg = document.createElement('span');
-        msg.textContent = (body && body.message) || 'Unexpected error.';
-        chatResult.appendChild(msg);
+        renderErrorBody(chatResult, httpStatus, body);
         return;
       }
 
@@ -490,6 +594,51 @@
       chatInput.value = '';
       clearResult(chatResult);
     });
+
+    // ---------- suggestion chips ----------
+    document.querySelectorAll('#chat-suggestions .suggestion').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        chatInput.value = btn.textContent;
+        chatInput.focus();
+      });
+    });
+
+    // ---------- copy buttons on responses (added after each render) ----------
+    function attachCopyAfterRender(resultEl, getText) {
+      // Wait for next tick so the result content is in place.
+      queueMicrotask(() => {
+        if (resultEl.classList.contains('show') && !resultEl.classList.contains('error')) {
+          addCopyButton(resultEl, getText);
+        }
+      });
+    }
+
+    // Wrap renderChat / renderExplain to add copy buttons on success.
+    const _origRenderChat = renderChat;
+    renderChat = function(httpStatus, body, parseError) {
+      _origRenderChat(httpStatus, body, parseError);
+      attachCopyAfterRender(chatResult, () => (body && body.response) || '');
+    };
+    const _origRenderExplain = renderExplain;
+    renderExplain = function(httpStatus, body, parseError) {
+      _origRenderExplain(httpStatus, body, parseError);
+      attachCopyAfterRender(explainResult, () => (body && body.explanation) || '');
+    };
+
+    // ---------- /health footer info ----------
+    (async () => {
+      try {
+        const r = await fetch('/health');
+        if (r.ok) {
+          const h = await r.json();
+          const parts = [];
+          if (h.model) parts.push('model: ' + h.model);
+          if (h.retriever) parts.push('retriever: ' + h.retriever);
+          if (h.corpus_pages) parts.push(h.corpus_pages + ' corpus pages');
+          document.getElementById('footer-info').textContent = parts.join(' · ');
+        }
+      } catch (_) { /* silent */ }
+    })();
   </script>
 </body>
 </html>

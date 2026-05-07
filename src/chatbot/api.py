@@ -28,7 +28,12 @@ from chatbot.confidence import derive_confidence
 from chatbot.corpus import load_corpus
 from chatbot.disclaimer import append_disclaimer
 from chatbot.image_check import looks_like_mri
-from chatbot.llm import LLMClient
+from chatbot.llm import (
+    LLMClient,
+    LLMRateLimited,
+    LLMServiceError,
+    LLMUpstreamUnavailable,
+)
 from chatbot.ml_client import (
     MLClient,
     MLServiceError,
@@ -52,6 +57,24 @@ state: dict = {}
 
 def _project_root() -> Path:
     return Path(__file__).resolve().parents[2]
+
+
+def _llm_error_response(exc: LLMServiceError) -> JSONResponse:
+    """Translate provider-agnostic LLM errors into a clean JSON 503."""
+    if isinstance(exc, LLMRateLimited):
+        error_code = "llm_rate_limited"
+    elif isinstance(exc, LLMUpstreamUnavailable):
+        error_code = "llm_unavailable"
+    else:
+        error_code = "llm_service_error"
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": error_code,
+            "message": exc.user_message,
+            "retry_suggested": True,
+        },
+    )
 
 
 def _build_retriever(corpus) -> Retriever:
@@ -88,7 +111,14 @@ app = FastAPI(title="Brain Tumor Chatbot", version="0.1.0", lifespan=lifespan)
 
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok"}
+    retriever = state.get("retriever")
+    corpus = state.get("corpus")
+    return {
+        "status": "ok",
+        "retriever": type(retriever).__name__ if retriever else None,
+        "corpus_pages": len(corpus.chunks) if corpus else 0,
+        "model": getattr(state.get("llm_client"), "model_name", None),
+    }
 
 
 @app.post("/explain")
@@ -169,10 +199,13 @@ async def explain(
         confidence=summary,
         retriever=state["retriever"],
     )
-    explanation = await state["llm_client"].complete(
-        system_blocks=system_blocks,
-        user_message=user_message,
-    )
+    try:
+        explanation = await state["llm_client"].complete(
+            system_blocks=system_blocks,
+            user_message=user_message,
+        )
+    except LLMServiceError as exc:
+        return _llm_error_response(exc)
 
     safety = safety_scan(
         user_input="",
@@ -226,10 +259,13 @@ async def chat(req: ChatRequest):
         retriever=state["retriever"],
         user_message=message,
     )
-    response = await state["llm_client"].complete(
-        system_blocks=system_blocks,
-        user_message=user_msg,
-    )
+    try:
+        response = await state["llm_client"].complete(
+            system_blocks=system_blocks,
+            user_message=user_msg,
+        )
+    except LLMServiceError as exc:
+        return _llm_error_response(exc)
 
     safety = safety_scan(
         user_input=message,
