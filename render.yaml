@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: brain-tumor-chatbot
+    runtime: python
+    buildCommand: pip install -e ".[dev]"
+    startCommand: uvicorn chatbot.api:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: RETRIEVER
+        value: whole_corpus
+      - key: RETRIEVER_TOP_K
+        value: "5"
+      - key: ML_API_BASE_URL
+        value: https://akramgamal1-brain-tumor-detection.hf.space
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: SERVE_DEMO_UI
+        value: "false"
+      - key: BAND_HIGH
+        value: "0.85"
+      - key: BAND_LOW
+        value: "0.65"
+      - key: GLIOMA_MENINGIOMA_GAP
+        value: "0.20"
