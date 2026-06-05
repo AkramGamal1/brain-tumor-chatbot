@@ -14,7 +14,7 @@ services:
       - key: RETRIEVER_TOP_K
         value: "5"
       - key: ML_API_BASE_URL
-        value: https://akramgamal1-brain-tumor-detection.hf.space
+        value: https://AkramGamal1-brain-tumor-detection.hf.space
       - key: CORS_ORIGINS
         value: "*"
       - key: SERVE_DEMO_UI
