@@ -5,7 +5,6 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "brain-tumor-chatbot"
 version = "0.1.0"
-package-mode = false
 description = "Layperson-facing chatbot wrapping the brain tumor MRI classifier"
 requires-python = ">=3.11,<3.13"
 dependencies = [
