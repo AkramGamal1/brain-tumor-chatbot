@@ -2,7 +2,7 @@ services:
   - type: web
     name: brain-tumor-chatbot
     runtime: python
-    buildCommand: poetry install --no-root
+    buildCommand: pip install -e ".[dev]"
     startCommand: uvicorn chatbot.api:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: GOOGLE_API_KEY
@@ -14,7 +14,7 @@ services:
       - key: RETRIEVER_TOP_K
         value: "5"
       - key: ML_API_BASE_URL
-        value: https://AkramGamal1-brain-tumor-detection.hf.space
+        value: https://your-hf-username-brain-tumor-detection.hf.space
       - key: CORS_ORIGINS
         value: "*"
       - key: SERVE_DEMO_UI
