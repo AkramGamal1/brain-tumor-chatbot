@@ -2,7 +2,7 @@ services:
   - type: web
     name: brain-tumor-chatbot
     runtime: python
-    buildCommand: pip install -e ".[dev]"
+    buildCommand: poetry install --no-root
     startCommand: uvicorn chatbot.api:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: GOOGLE_API_KEY
