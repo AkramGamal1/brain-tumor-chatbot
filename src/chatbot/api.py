@@ -111,6 +111,10 @@ class ExplainResponse(BaseModel):
         description="One of: glioma | meningioma | pituitary | notumor",
         examples=["glioma"],
     )
+    confidence: float = Field(
+        description="Raw confidence score from the ML classifier (0.0 – 1.0).",
+        examples=[0.87],
+    )
     confidence_band: str = Field(
         description="Verbal confidence band: 'fairly certain' | 'moderately confident' | 'uncertain' | 'suppressed'",
         examples=["fairly certain"],
@@ -121,6 +125,14 @@ class ExplainResponse(BaseModel):
     override_applied: bool = Field(
         description="True when the glioma↔meningioma proximity override was triggered.",
         examples=[False],
+    )
+    prediction: dict = Field(
+        description="Raw output from the ML classifier — predicted_class, confidence, and per-class probabilities.",
+        examples=[{
+            "predicted_class": "glioma",
+            "confidence": 0.87,
+            "probabilities": {"glioma": 0.87, "meningioma": 0.08, "notumor": 0.03, "pituitary": 0.02},
+        }],
     )
 
 
@@ -303,8 +315,10 @@ async def explain(
     return ExplainResponse(
         predicted_class=confidence.predicted_class,
         confidence_band=confidence.band or "suppressed",
+        confidence=prediction["confidence"],
         explanation=explanation,
         override_applied=confidence.is_glioma_meningioma_overlap,
+        prediction=prediction,
     )
 
 
