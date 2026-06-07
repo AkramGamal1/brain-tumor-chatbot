@@ -1,4 +1,18 @@
-# ─── src/chatbot/api.py ───────────────────────────────────────────────────────
+"""Google Gemini SDK wrapper.
+
+The external interface (`LLMClient.complete(system_blocks, user_message) -> str`)
+is unchanged from the prior Anthropic / Gemini 2.0 / Groq implementations, so
+callers do not know the provider changed. The Anthropic-shaped `cache_control`
+field on system blocks is silently ignored — Gemini does not consume it.
+
+The three system blocks (rules, corpus, per-request prediction context) are
+concatenated into a single `system_instruction` on the GenerateContentConfig.
+
+Upstream errors are translated to provider-agnostic exceptions
+(`LLMRateLimited`, `LLMUpstreamUnavailable`, `LLMServiceError`) so the API
+layer can return clean JSON responses without importing google.genai.
+"""
+
 from __future__ import annotations
 
 import os
@@ -71,7 +85,10 @@ async def _startup() -> None:
         retriever = WholeCorpusRetriever(corpus)
     app.state.retriever = retriever
     app.state.ml_client = MLClient(base_url=os.getenv("ML_API_BASE_URL", "http://localhost:8000"))
-    app.state.llm = LLMClient(model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
+    app.state.llm = LLMClient(
+        model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+        fallback_model=os.getenv("GEMINI_FALLBACK_MODEL", "gemini-2.0-flash-lite"),
+    )
     app.state.crisis_text = corpus.crisis_response_text
 
 
