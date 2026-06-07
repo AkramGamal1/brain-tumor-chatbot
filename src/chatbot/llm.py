@@ -62,11 +62,13 @@ class LLMClient:
         self,
         api_key: str | None = None,
         model: str = "gemini-2.5-flash",
+        fallback_model: str = "gemini-2.0-flash-lite",
         max_tokens: int = 1024,
     ) -> None:
         key = api_key or os.environ.get("GOOGLE_API_KEY")
         self._client = genai.Client(api_key=key)
         self.model_name = model
+        self.fallback_model = fallback_model
         self.max_tokens = max_tokens
 
     async def complete(
@@ -77,18 +79,26 @@ class LLMClient:
         system_text = "\n\n".join(
             block["text"] for block in system_blocks if block.get("type") == "text"
         )
-        try:
-            response = await self._client.aio.models.generate_content(
-                model=self.model_name,
-                contents=user_message,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_text,
-                    max_output_tokens=self.max_tokens,
-                ),
-            )
-        except genai_errors.APIError as exc:
-            raise _translate(exc) from exc
-        text = response.text
-        if text is None:
-            return ""
-        return text.strip()
+        for model in (self.model_name, self.fallback_model):
+            try:
+                response = await self._client.aio.models.generate_content(
+                    model=model,
+                    contents=user_message,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_text,
+                        max_output_tokens=self.max_tokens,
+                    ),
+                )
+                text = response.text
+                return text.strip() if text else ""
+            except genai_errors.APIError as exc:
+                err = _translate(exc)
+                if isinstance(err, LLMRateLimited) and model == self.model_name:
+                    continue   # try fallback
+                raise err from exc
+        # both exhausted
+        raise LLMRateLimited(
+            "The chatbot has reached its daily request limit on all available models. "
+            "Please try again tomorrow.",
+            status_code=429,
+        )
