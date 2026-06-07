@@ -15,6 +15,7 @@ layer can return clean JSON responses without importing google.genai.
 
 from __future__ import annotations
 
+import asyncio
 import os
 
 from google import genai
@@ -79,26 +80,29 @@ class LLMClient:
         system_text = "\n\n".join(
             block["text"] for block in system_blocks if block.get("type") == "text"
         )
+        last_err: LLMServiceError | None = None
+
         for model in (self.model_name, self.fallback_model):
-            try:
-                response = await self._client.aio.models.generate_content(
-                    model=model,
-                    contents=user_message,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_text,
-                        max_output_tokens=self.max_tokens,
-                    ),
-                )
-                text = response.text
-                return text.strip() if text else ""
-            except genai_errors.APIError as exc:
-                err = _translate(exc)
-                if isinstance(err, LLMRateLimited) and model == self.model_name:
-                    continue   # try fallback
-                raise err from exc
-        # both exhausted
-        raise LLMRateLimited(
-            "The chatbot has reached its daily request limit on all available models. "
-            "Please try again tomorrow.",
-            status_code=429,
-        )
+            for attempt in range(3):  # up to 3 attempts per model
+                try:
+                    response = await self._client.aio.models.generate_content(
+                        model=model,
+                        contents=user_message,
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_text,
+                            max_output_tokens=self.max_tokens,
+                        ),
+                    )
+                    text = response.text
+                    return text.strip() if text else ""
+                except genai_errors.APIError as exc:
+                    err = _translate(exc)
+                    last_err = err
+                    if isinstance(err, LLMRateLimited):
+                        break  # quota error — no point retrying, try next model
+                    if isinstance(err, LLMUpstreamUnavailable) and attempt < 2:
+                        await asyncio.sleep(2 ** attempt)  # 1s, then 2s
+                        continue
+                    raise err from exc  # unexpected error, fail immediately
+
+        raise last_err
